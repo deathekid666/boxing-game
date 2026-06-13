@@ -110,10 +110,36 @@ function fistDist(fistX, attackerDepth, d) {
   return Math.hypot(fistX - d.x, (attackerDepth - d.depth) * DEPTH_WORLD_SCALE);
 }
 
-// ── Streak persistence ────────────────────────────────────────────────────────
-let winStreak = parseInt(localStorage.getItem('fbg_streak') || '0', 10);
-let bestStreak = parseInt(localStorage.getItem('fbg_best')   || '0', 10);
-let _streakNewBest = false; // flashes "NEW BEST" on game-over screen
+// ── Persistent stats (localStorage) ──────────────────────────────────────────
+function _li(k, def=0)  { return parseInt(localStorage.getItem(k) || def, 10); }
+function _lj(k, def={}) { try { return JSON.parse(localStorage.getItem(k)) || def; } catch { return def; } }
+
+let winStreak   = _li('fbg_streak');
+let bestStreak  = _li('fbg_best');
+let statWins    = _li('fbg_wins');
+let statLosses  = _li('fbg_losses');
+let statDraws   = _li('fbg_draws');
+let statKOs     = _li('fbg_kos');
+let statDmg     = _li('fbg_dmg');
+let statBestCombo = _li('fbg_combo');
+let statCharWins  = _lj('fbg_chars', {KID:0,BRUISER:0,SWIFT:0,TANK:0});
+
+let _streakNewBest = false;
+
+// Per-match accumulators (reset at startFight, accumulated each round)
+let _mKOs = 0, _mDmg = 0, _mCombo = 0;
+
+function _saveStats() {
+  localStorage.setItem('fbg_streak', winStreak);
+  localStorage.setItem('fbg_best',   bestStreak);
+  localStorage.setItem('fbg_wins',   statWins);
+  localStorage.setItem('fbg_losses', statLosses);
+  localStorage.setItem('fbg_draws',  statDraws);
+  localStorage.setItem('fbg_kos',    statKOs);
+  localStorage.setItem('fbg_dmg',    statDmg);
+  localStorage.setItem('fbg_combo',  statBestCombo);
+  localStorage.setItem('fbg_chars',  JSON.stringify(statCharWins));
+}
 
 function _updateStreak(p1Won) {
   if (p1Won) {
@@ -121,11 +147,19 @@ function _updateStreak(p1Won) {
     if (winStreak > bestStreak) { bestStreak = winStreak; _streakNewBest = true; }
     else { _streakNewBest = false; }
   } else {
-    winStreak = 0;
-    _streakNewBest = false;
+    winStreak = 0; _streakNewBest = false;
   }
-  localStorage.setItem('fbg_streak', winStreak);
-  localStorage.setItem('fbg_best',   bestStreak);
+}
+
+function _updateMatchStats(p1Won, isDraw) {
+  _updateStreak(p1Won && !isDraw);
+  if (isDraw)       { statDraws++; }
+  else if (p1Won)   { statWins++;  statCharWins[CHARACTERS[p1CharIdx].name] = (statCharWins[CHARACTERS[p1CharIdx].name]||0)+1; }
+  else              { statLosses++; }
+  statKOs  += _mKOs;
+  statDmg  += _mDmg;
+  if (_mCombo > statBestCombo) statBestCombo = _mCombo;
+  _saveStats();
 }
 
 // ── Game state ───────────────────────────────────────────────────────────────
@@ -187,6 +221,7 @@ function startGame() {
 }
 
 function startFight() {
+  _mKOs = 0; _mDmg = 0; _mCombo = 0;
   spawnFighters();
   phase = 'fight';
   SFX.bell();
@@ -388,7 +423,7 @@ function updateCPU() {
 
 // ── Update ────────────────────────────────────────────────────────────────────
 function update() {
-  if (phase==='menu' || phase==='charSelect') return;
+  if (phase==='menu' || phase==='charSelect' || phase==='stats') return;
 
   if (phase==='roundEnd') {
     if (roundEndTimer > 0) {
@@ -567,10 +602,14 @@ function _endRound(msg, p1Win, p2Win) {
     p2: { hp: p2.hp, maxHp: p2.maxHp, knockdowns: p2.knockdowns, maxCombo: p2.maxCombo, dmgDealt: Math.round(p1.maxHp - p1.hp) },
     winner: p1Win > 0 ? 0 : p2Win > 0 ? 1 : -1,
   };
+  // Accumulate per-round stats for the match totals
+  _mKOs   += p2.knockdowns;
+  _mDmg   += Math.round(p2.maxHp - p2.hp);
+  _mCombo  = Math.max(_mCombo, p1.maxCombo);
   if (roundsWon[0]>=needed || roundsWon[1]>=needed || currentRound>=totalRounds) {
     roundEndTimer = 999;
     phase = 'roundEnd';
-    _updateStreak(roundsWon[0] > roundsWon[1]);
+    _updateMatchStats(roundsWon[0] > roundsWon[1], roundsWon[0] === roundsWon[1] && currentRound >= totalRounds);
     setTimeout(()=>SFX.victory(), 700);
   } else {
     phase = 'roundEnd';
@@ -1067,13 +1106,124 @@ function drawMenu() {
 
   // Win streak
   if (bestStreak > 0) {
-    const streakY = 445;
+    const streakY = 435;
     ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
     ctx.fillStyle = winStreak > 0 ? '#ffe44d' : '#555';
     ctx.fillText(`🔥 Current streak: ${winStreak}`, W/2 - 90, streakY);
     ctx.fillStyle = '#888';
     ctx.fillText(`🏆 Best: ${bestStreak}`, W/2 + 80, streakY);
   }
+
+  // STATS button
+  const sbx = W/2-52, sby = 452, sbw = 104, sbh = 28;
+  const played = statWins + statLosses + statDraws;
+  ctx.fillStyle = 'rgba(40,40,50,0.85)';
+  ctx.beginPath(); ctx.roundRect(sbx, sby, sbw, sbh, 7); ctx.fill();
+  ctx.strokeStyle = '#444'; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.roundRect(sbx, sby, sbw, sbh, 7); ctx.stroke();
+  ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillStyle = '#888';
+  ctx.fillText(played > 0 ? `📊 STATS  (${played} played)` : '📊 STATS', W/2, sby + 19);
+
+  ctx.restore();
+}
+
+function drawStats() {
+  ctx.fillStyle = 'rgba(0,0,0,0.92)'; ctx.fillRect(0, 0, W, H);
+  ctx.save();
+
+  const CX = W/2, CW = 640, CH = 400, top = H/2 - CH/2 - 8;
+  ctx.fillStyle = 'rgba(12,14,22,0.97)';
+  ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.roundRect(CX-CW/2, top, CW, CH, 14); ctx.fill(); ctx.stroke();
+
+  const L = CX - 290, R = CX + 290;
+  ctx.textAlign = 'center';
+
+  // Title
+  ctx.font = 'bold 22px sans-serif'; ctx.fillStyle = '#ffe44d';
+  ctx.fillText('PLAYER  STATS', CX, top + 34);
+  ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(L, top+46); ctx.lineTo(R, top+46); ctx.stroke();
+
+  const played = statWins + statLosses + statDraws;
+  const winRate = played > 0 ? Math.round(statWins / played * 100) : 0;
+
+  // W / L / D row
+  let cx2 = CX - 180;
+  for (const [lbl, val, col] of [
+    ['WINS', statWins, '#44dd88'], ['LOSSES', statLosses, '#ff5555'], ['DRAWS', statDraws, '#aaa'], ['WIN RATE', winRate+'%', '#ffe44d']
+  ]) {
+    ctx.font = 'bold 28px sans-serif'; ctx.fillStyle = col; ctx.textAlign = 'center';
+    ctx.fillText(val, cx2, top + 88);
+    ctx.font = '10px sans-serif'; ctx.fillStyle = '#555';
+    ctx.fillText(lbl, cx2, top + 103);
+    cx2 += 120;
+  }
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(L, top+114); ctx.lineTo(R, top+114); ctx.stroke();
+
+  // Streak row
+  let sy = top + 136;
+  ctx.font = '10px sans-serif'; ctx.fillStyle = '#555'; ctx.textAlign = 'center';
+  ctx.fillText('STREAK', CX - 100, sy); ctx.fillText('BEST STREAK', CX + 100, sy);
+  ctx.font = 'bold 26px sans-serif';
+  ctx.fillStyle = winStreak > 0 ? '#ffe44d' : '#666'; ctx.fillText(winStreak, CX - 100, sy + 26);
+  ctx.fillStyle = '#aaa'; ctx.fillText(bestStreak, CX + 100, sy + 26);
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+  sy += 42;
+  ctx.beginPath(); ctx.moveTo(L, sy); ctx.lineTo(R, sy); ctx.stroke();
+  sy += 16;
+
+  // Combat records
+  ctx.font = '10px sans-serif'; ctx.fillStyle = '#444'; ctx.textAlign = 'center';
+  ctx.fillText('COMBAT  RECORDS', CX, sy);
+  sy += 18;
+  const combatRows = [
+    ['Best Combo', statBestCombo >= 2 ? statBestCombo + ' HIT' : '—',
+      statBestCombo >= 6 ? '#ffd700' : statBestCombo >= 3 ? '#ff8800' : '#ccc'],
+    ['Total Knockdowns Dealt', statKOs > 0 ? String(statKOs) : '—', '#ff8800'],
+    ['Total Damage Dealt',     statDmg > 0 ? statDmg.toLocaleString() : '—', '#ccc'],
+  ];
+  for (const [lbl, val, col] of combatRows) {
+    ctx.font = '11px sans-serif'; ctx.fillStyle = '#555'; ctx.textAlign = 'left';
+    ctx.fillText(lbl, L, sy);
+    ctx.font = 'bold 13px sans-serif'; ctx.fillStyle = col; ctx.textAlign = 'right';
+    ctx.fillText(val, R, sy);
+    sy += 22;
+  }
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(L, sy+2); ctx.lineTo(R, sy+2); ctx.stroke();
+  sy += 18;
+
+  // Per-character wins
+  ctx.font = '10px sans-serif'; ctx.fillStyle = '#444'; ctx.textAlign = 'center';
+  ctx.fillText('WINS  BY  CHARACTER', CX, sy);
+  sy += 16;
+  const maxCharWin = Math.max(1, ...CHARACTERS.map(c => statCharWins[c.name] || 0));
+  for (const ch of CHARACTERS) {
+    const wins = statCharWins[ch.name] || 0;
+    const bx = CX - 80, bw = 160, bh = 10;
+    ctx.font = '10px sans-serif'; ctx.fillStyle = ch.color; ctx.textAlign = 'right';
+    ctx.fillText(ch.name, CX - 86, sy + 8);
+    ctx.fillStyle = '#1a1a2a';
+    ctx.beginPath(); ctx.roundRect(bx, sy, bw, bh, 3); ctx.fill();
+    if (wins > 0) {
+      ctx.fillStyle = ch.color;
+      ctx.beginPath(); ctx.roundRect(bx, sy, Math.round(bw * wins / maxCharWin), bh, 3); ctx.fill();
+    }
+    ctx.font = 'bold 10px sans-serif'; ctx.fillStyle = wins > 0 ? ch.color : '#444'; ctx.textAlign = 'left';
+    ctx.fillText(wins + 'W', CX + 86, sy + 8);
+    sy += 18;
+  }
+
+  // Close hint
+  ctx.font = '12px sans-serif'; ctx.fillStyle = '#444'; ctx.textAlign = 'center';
+  ctx.fillText('Press  ESC  or click to close', CX, top + CH - 14);
+
   ctx.restore();
 }
 
@@ -1344,6 +1494,7 @@ function draw() {
   }
 
   if(phase==='menu'){drawMenu();return;}
+  if(phase==='stats'){drawStats();return;}
   if(phase==='charSelect'){drawCharSelect();return;}
 
   let shakeX=0, shakeY=0;
@@ -1405,13 +1556,16 @@ canvas.addEventListener('click', e => {
     }
     return;
   }
+  if(phase==='stats'){ phase='menu'; return; }
   if (!window.netHooks.canMenuInput()) return;
   if(phase==='menu'){
     [1,3,5].forEach((r,i)=>{
       const bx=W/2-130+i*110,by=205,bw=90,bh=50;
       if(sx>=bx&&sx<=bx+bw&&sy>=by&&sy<=by+bh){ menuSelected=r; SFX.click(); }
     });
-    if(sx>=W/2-100&&sx<=W/2+100&&sy>=310&&sy<=365){ SFX.click(); totalRounds=menuSelected; startGame(); }
+    if(sx>=W/2-100&&sx<=W/2+100&&sy>=310&&sy<=365){ SFX.click(); totalRounds=menuSelected; startGame(); return; }
+    // STATS button
+    if(sx>=W/2-52&&sx<=W/2+52&&sy>=452&&sy<=480){ SFX.click(); phase='stats'; return; }
     return;
   }
   if(phase==='roundEnd'||phase==='gameOver'){
@@ -1436,6 +1590,9 @@ function _checkBothConfirmed() {
 
 document.addEventListener('keydown', e=>{
   if(e.key==='m'||e.key==='M'){ window.BGM?.toggle(); return; }
+  if(e.key==='Escape'){ if(phase==='stats'){ phase='menu'; return; } }
+  if(e.key==='Tab'){ e.preventDefault(); if(phase==='menu'){ phase='stats'; SFX.click(); return; } if(phase==='stats'){ phase='menu'; return; } }
+  if(phase==='stats') return;
   if(phase==='charSelect'){
     const N=CHARACTERS.length;
     if(e.key==='a'||e.key==='A'){ if(!p1Confirmed){p1CharIdx=(p1CharIdx+N-1)%N;SFX.click();} return; }
