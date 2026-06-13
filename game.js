@@ -110,6 +110,24 @@ function fistDist(fistX, attackerDepth, d) {
   return Math.hypot(fistX - d.x, (attackerDepth - d.depth) * DEPTH_WORLD_SCALE);
 }
 
+// ── Streak persistence ────────────────────────────────────────────────────────
+let winStreak = parseInt(localStorage.getItem('fbg_streak') || '0', 10);
+let bestStreak = parseInt(localStorage.getItem('fbg_best')   || '0', 10);
+let _streakNewBest = false; // flashes "NEW BEST" on game-over screen
+
+function _updateStreak(p1Won) {
+  if (p1Won) {
+    winStreak++;
+    if (winStreak > bestStreak) { bestStreak = winStreak; _streakNewBest = true; }
+    else { _streakNewBest = false; }
+  } else {
+    winStreak = 0;
+    _streakNewBest = false;
+  }
+  localStorage.setItem('fbg_streak', winStreak);
+  localStorage.setItem('fbg_best',   bestStreak);
+}
+
 // ── Game state ───────────────────────────────────────────────────────────────
 let phase = 'menu';
 let totalRounds = 3;
@@ -552,6 +570,7 @@ function _endRound(msg, p1Win, p2Win) {
   if (roundsWon[0]>=needed || roundsWon[1]>=needed || currentRound>=totalRounds) {
     roundEndTimer = 999;
     phase = 'roundEnd';
+    _updateStreak(roundsWon[0] > roundsWon[1]);
     setTimeout(()=>SFX.victory(), 700);
   } else {
     phase = 'roundEnd';
@@ -1045,6 +1064,16 @@ function drawMenu() {
   ctx.fillText('START FIGHT',W/2,344);
   ctx.font='13px sans-serif';ctx.fillStyle='#555';
   ctx.fillText('click the buttons above to select',W/2,395);
+
+  // Win streak
+  if (bestStreak > 0) {
+    const streakY = 445;
+    ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = winStreak > 0 ? '#ffe44d' : '#555';
+    ctx.fillText(`🔥 Current streak: ${winStreak}`, W/2 - 90, streakY);
+    ctx.fillStyle = '#888';
+    ctx.fillText(`🏆 Best: ${bestStreak}`, W/2 + 80, streakY);
+  }
   ctx.restore();
 }
 
@@ -1181,7 +1210,7 @@ function drawGameOver() {
   ctx.save();
 
   // ── Card ─────────────────────────────────────────────────────────────────
-  const CX = W/2, CW = 640, CH = 410, top = H/2 - CH/2 - 10;
+  const CX = W/2, CW = 640, CH = 432, top = H/2 - CH/2 - 10;
   const L = CX - 290, R = CX + 290;
   ctx.fillStyle = 'rgba(12,14,22,0.97)';
   ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1.5;
@@ -1272,6 +1301,23 @@ function drawGameOver() {
       ctx.fill(); ctx.strokeStyle = '#444'; ctx.lineWidth = 1; ctx.stroke();
     }
     ry += 26;
+
+    // Win streak
+    ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
+    if (_streakNewBest && winStreak > 1) {
+      ctx.fillStyle = '#ffd700';
+      ctx.fillText(`🏆 NEW BEST STREAK!  ${winStreak} in a row`, CX, ry);
+    } else if (winStreak > 1) {
+      ctx.fillStyle = '#ffe44d';
+      ctx.fillText(`🔥 Win streak: ${winStreak}  (best: ${bestStreak})`, CX, ry);
+    } else if (winStreak === 1) {
+      ctx.fillStyle = '#888';
+      ctx.fillText(`Win streak: 1  (best: ${bestStreak})`, CX, ry);
+    } else if (bestStreak > 0) {
+      ctx.fillStyle = '#555';
+      ctx.fillText(`Streak lost  (best: ${bestStreak})`, CX, ry);
+    }
+    ry += 22;
 
     // Prompt
     ctx.font = '13px sans-serif'; ctx.fillStyle = '#666'; ctx.textAlign = 'center';
