@@ -92,6 +92,7 @@ const KD_DOWN      = 120;  // frames lying down (~2 s at 60 fps, referee counts 
 const KD_RISE      = 24;   // frames to stand back up
 const KD_TOTAL     = KD_FALL + KD_DOWN + KD_RISE;
 const KD_INVUL     = 90;   // invulnerability frames after rising
+const COMBO_WINDOW = 110;  // frames to land the next hit before combo resets (~1.8 s)
 
 function depthToScreenY(depth) { return RING_BACK_Y + depth * (RING_FRONT_Y - RING_BACK_Y); }
 function depthToScale(depth)   { return RING_BACK_S + depth * (RING_FRONT_S - RING_BACK_S); }
@@ -120,6 +121,7 @@ function mkFighter(x, color, dir) {
     x, y: 315, color, dir, depth: 0.5, jz: 0, jvz: 0, jumpCd: 0,
     hp: MAX_HP, hpDisplay: MAX_HP, hpFlash: 0,
     knockdown: false, knockdownT: 0, knockdownInvul: 0, knockdowns: 0,
+    combo: 0, comboTimer: 0,
     shield: MAX_SHIELD,
     shieldTimer: 0, vx: 0,
     punching: false, punchT: 0, punchCd: 0,
@@ -189,6 +191,8 @@ function applyHit(attacker, defender, dmg, type, isTip) {
       floaties.push({ x: defender.x, y: fighterScreenY(defender)-110, vx:0, vy:-1.5, t:0, col:'#ffe44d', size:32, txt:'DOWN!' });
     }
   }
+  attacker.combo++;
+  attacker.comboTimer = COMBO_WINDOW;
   defender.wobble = type==='super' ? 35 : 20;
   defender.hit    = type==='super' ? 18 : 12;
   defender.vx     = attacker.dir * (type==='super' ? 8 : 4);
@@ -390,6 +394,19 @@ function update() {
     if (p.hpFlash>0)   p.hpFlash--;
     else if (p.hpDisplay > p.hp) p.hpDisplay = Math.max(p.hp, p.hpDisplay - 1.2);
     if (p.knockdownInvul > 0) p.knockdownInvul--;
+    if (p.comboTimer > 0) {
+      p.comboTimer--;
+      if (p.comboTimer === 0 && p.combo >= 2) {
+        const n = p.combo;
+        const col = n >= 6 ? '#ffd700' : n >= 4 ? '#ff4444' : '#ff8800';
+        const msg = `${n} HIT${n >= 6 ? '!!' : '!'}`;
+        floaties.push({ x: p.x + p.dir*55, y: fighterScreenY(p)-100, vx: p.dir*1.5, vy:-2.2, t:0, col, size: Math.min(30, 18+n*2), txt: msg });
+        if (n >= 6) SFX.bell(); else SFX.shieldBlock();
+        p.combo = 0;
+      } else if (p.comboTimer === 0) {
+        p.combo = 0;
+      }
+    }
     if (p.knockdown) {
       if (p.knockdownT === KD_FALL) SFX.stagger();
       const inDown = p.knockdownT >= KD_FALL && p.knockdownT < KD_FALL + KD_DOWN;
@@ -652,6 +669,34 @@ function drawHUD() {
   ctx.textAlign='left';
 }
 
+function drawCombos() {
+  for (const p of [p1, p2]) {
+    if (p.combo < 2 || p.comboTimer <= 0) continue;
+    const s    = depthToScale(p.depth);
+    const sx   = p.x + p.dir * 48 * s;
+    const sy   = fighterScreenY(p) - 108 * s;
+    const fade = Math.min(1, p.comboTimer / 25);          // fade out in last 25 frames
+    const pulse = 1 + Math.sin(Date.now() / 70) * 0.06;  // subtle bounce
+    const col  = p.combo >= 6 ? '#ffd700' : p.combo >= 4 ? '#ff4444' : '#ff8800';
+    ctx.save();
+    ctx.globalAlpha = fade;
+    ctx.textAlign = 'center';
+    // Big number
+    ctx.font = `bold ${Math.round(42 * pulse)}px sans-serif`;
+    ctx.strokeStyle = '#000'; ctx.lineWidth = 6;
+    ctx.strokeText(String(p.combo), sx, sy);
+    ctx.fillStyle = col;
+    ctx.fillText(String(p.combo), sx, sy);
+    // Small "HIT" label
+    ctx.font = 'bold 13px sans-serif';
+    ctx.lineWidth = 4;
+    ctx.strokeText('HIT', sx, sy + 17);
+    ctx.fillStyle = '#fff';
+    ctx.fillText('HIT', sx, sy + 17);
+    ctx.restore();
+  }
+}
+
 function drawKnockdownCount() {
   for (const p of [p1, p2]) {
     if (!p.knockdown) continue;
@@ -771,6 +816,7 @@ function draw() {
   drawCrowd();drawRing();
   const sorted = [p1, p2].sort((a, b) => a.depth - b.depth);
   drawFighter(sorted[0]); drawFighter(sorted[1]);
+  drawCombos();
   drawKnockdownCount();
   drawFloaties();
   ctx.restore();
