@@ -110,6 +110,7 @@ let roundsWon = [0, 0];
 let p1, p2, floaties;
 let roundEndMsg = '';
 let roundEndTimer = 0;
+let roundStats = null;
 let roundFrame = 0;
 let hitStop = 0;
 let shakeT = 0;
@@ -121,7 +122,7 @@ function mkFighter(x, color, dir) {
     x, y: 315, color, dir, depth: 0.5, jz: 0, jvz: 0, jumpCd: 0,
     hp: MAX_HP, hpDisplay: MAX_HP, hpFlash: 0,
     knockdown: false, knockdownT: 0, knockdownInvul: 0, knockdowns: 0,
-    combo: 0, comboTimer: 0,
+    combo: 0, comboTimer: 0, maxCombo: 0,
     shield: MAX_SHIELD,
     shieldTimer: 0, vx: 0,
     punching: false, punchT: 0, punchCd: 0,
@@ -144,6 +145,7 @@ function spawnFighters() {
 function startGame() {
   currentRound = 1;
   roundsWon = [0, 0];
+  roundStats = null;
   spawnFighters();
   phase = 'fight';
   SFX.bell();
@@ -193,6 +195,7 @@ function applyHit(attacker, defender, dmg, type, isTip) {
   }
   attacker.combo++;
   attacker.comboTimer = COMBO_WINDOW;
+  if (attacker.combo > attacker.maxCombo) attacker.maxCombo = attacker.combo;
   defender.wobble = type==='super' ? 35 : 20;
   defender.hit    = type==='super' ? 18 : 12;
   defender.vx     = attacker.dir * (type==='super' ? 8 : 4);
@@ -447,6 +450,11 @@ function _endRound(msg, p1Win, p2Win) {
   roundsWon[0]+=p1Win; roundsWon[1]+=p2Win;
   roundEndMsg = msg;
   roundEndTimer = 180;
+  roundStats = {
+    p1: { hp: p1.hp, knockdowns: p1.knockdowns, maxCombo: p1.maxCombo, dmgDealt: Math.round(MAX_HP - p2.hp) },
+    p2: { hp: p2.hp, knockdowns: p2.knockdowns, maxCombo: p2.maxCombo, dmgDealt: Math.round(MAX_HP - p1.hp) },
+    winner: p1Win > 0 ? 0 : p2Win > 0 ? 1 : -1,
+  };
   if (roundsWon[0]>=needed || roundsWon[1]>=needed || currentRound>=totalRounds) {
     roundEndTimer = 999;
     phase = 'roundEnd';
@@ -759,18 +767,117 @@ function drawMenu() {
   ctx.restore();
 }
 
-function drawRoundEnd(){
-  ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(0,0,W,H);
-  ctx.save();ctx.textAlign='center';
-  ctx.font='bold 44px sans-serif';ctx.strokeStyle='#000';ctx.lineWidth=6;
-  ctx.strokeText(roundEndMsg,W/2,H/2-20);ctx.fillStyle='#ffe44d';ctx.fillText(roundEndMsg,W/2,H/2-20);
-  const needed=Math.ceil(totalRounds/2);
-  const matchOver=roundsWon[0]>=needed||roundsWon[1]>=needed||currentRound>=totalRounds;
-  ctx.font='20px sans-serif';ctx.strokeStyle='#000';ctx.lineWidth=3;
-  const s = (!matchOver && roundEndTimer>0)
-    ? `Next round in ${Math.ceil(roundEndTimer/60)}…`
-    : 'Press SPACE or click to continue';
-  ctx.strokeText(s,W/2,H/2+35);ctx.fillStyle='#fff';ctx.fillText(s,W/2,H/2+35);
+function drawRoundEnd() {
+  const needed    = Math.ceil(totalRounds / 2);
+  const matchOver = roundsWon[0]>=needed || roundsWon[1]>=needed || currentRound>=totalRounds;
+
+  ctx.fillStyle = 'rgba(0,0,0,0.80)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.save();
+
+  // ── Card ──────────────────────────────────────────────────────────────────
+  const CX = W/2, CY = H/2 + 5, CW = 610, CH = 375;
+  const top = CY - CH/2, L = CX - 270, R = CX + 270;
+  ctx.fillStyle = 'rgba(12,14,22,0.97)';
+  ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.roundRect(CX-CW/2, top, CW, CH, 14); ctx.fill(); ctx.stroke();
+
+  ctx.textAlign = 'center';
+
+  // Round label
+  ctx.font = '12px sans-serif'; ctx.fillStyle = '#666';
+  ctx.fillText(`ROUND  ${currentRound} / ${totalRounds}`, CX, top+26);
+
+  // Winner banner
+  const winCol = !roundStats ? '#ffe44d'
+    : roundStats.winner===0 ? '#4488ff' : roundStats.winner===1 ? '#ff4444' : '#ffe44d';
+  ctx.font = 'bold 24px sans-serif';
+  ctx.strokeStyle = '#000'; ctx.lineWidth = 5;
+  ctx.strokeText(roundEndMsg, CX, top+54);
+  ctx.fillStyle = winCol; ctx.fillText(roundEndMsg, CX, top+54);
+
+  // Separator
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(L, top+66); ctx.lineTo(R, top+66); ctx.stroke();
+
+  if (roundStats) {
+    const st = roundStats;
+
+    // Column headers
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'left';  ctx.fillStyle = '#4488ff'; ctx.fillText(window.playerNames.p1, L, top+86);
+    ctx.textAlign = 'right'; ctx.fillStyle = '#ff4444'; ctx.fillText(window.playerNames.p2, R, top+86);
+
+    // HP bars — P1 left→right, P2 right→left (mirror)
+    const bary = top+96, barh = 15, barw = 220;
+    const drawHpBar = (bx, val, flip) => {
+      ctx.fillStyle = '#1a1a1a'; ctx.beginPath(); ctx.roundRect(bx, bary, barw, barh, 3); ctx.fill();
+      const fw = Math.max(0, (val/MAX_HP)*barw);
+      if (fw > 0) {
+        const hsl = `hsl(${(val/MAX_HP)*120},80%,45%)`;
+        ctx.fillStyle = hsl;
+        ctx.beginPath(); ctx.roundRect(flip ? bx+barw-fw : bx, bary, fw, barh, 3); ctx.fill();
+      }
+      ctx.strokeStyle='#fff2'; ctx.lineWidth=1; ctx.beginPath(); ctx.roundRect(bx, bary, barw, barh, 3); ctx.stroke();
+    };
+    drawHpBar(L, st.p1.hp, false);
+    drawHpBar(R-barw, st.p2.hp, true);
+
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'left';  ctx.fillStyle = '#999'; ctx.fillText(`${Math.ceil(st.p1.hp)} HP`, L, bary+barh+13);
+    ctx.textAlign = 'right'; ctx.fillStyle = '#999'; ctx.fillText(`${Math.ceil(st.p2.hp)} HP`, R, bary+barh+13);
+
+    // Stat rows: value  |  label  |  value
+    const rows = [
+      { label: 'Knockdowns',
+        p1v: `▼ ${st.p1.knockdowns}`, p2v: `▼ ${st.p2.knockdowns}`,
+        p1c: st.p1.knockdowns > 0 ? '#ff8800' : '#555',
+        p2c: st.p2.knockdowns > 0 ? '#ff8800' : '#555' },
+      { label: 'Best Combo',
+        p1v: st.p1.maxCombo >= 2 ? `${st.p1.maxCombo} HIT` : '—',
+        p2v: st.p2.maxCombo >= 2 ? `${st.p2.maxCombo} HIT` : '—',
+        p1c: st.p1.maxCombo >= 6 ? '#ffd700' : st.p1.maxCombo >= 4 ? '#ff4444' : st.p1.maxCombo >= 2 ? '#ff8800' : '#555',
+        p2c: st.p2.maxCombo >= 6 ? '#ffd700' : st.p2.maxCombo >= 4 ? '#ff4444' : st.p2.maxCombo >= 2 ? '#ff8800' : '#555' },
+      { label: 'Damage Dealt',
+        p1v: String(st.p1.dmgDealt), p2v: String(st.p2.dmgDealt),
+        p1c: '#ccc', p2c: '#ccc' },
+    ];
+
+    let ry = top + 155;
+    for (const row of rows) {
+      ctx.font = '10px sans-serif'; ctx.fillStyle = '#555'; ctx.textAlign = 'center';
+      ctx.fillText(row.label, CX, ry);
+      ctx.font = 'bold 15px sans-serif';
+      ctx.textAlign = 'left';  ctx.fillStyle = row.p1c; ctx.fillText(row.p1v, L, ry);
+      ctx.textAlign = 'right'; ctx.fillStyle = row.p2c; ctx.fillText(row.p2v, R, ry);
+      ry += 30;
+    }
+
+    // Separator
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(L, ry+4); ctx.lineTo(R, ry+4); ctx.stroke();
+    ry += 20;
+
+    // Round win pips
+    ctx.font = '10px sans-serif'; ctx.fillStyle = '#555'; ctx.textAlign = 'center';
+    ctx.fillText('ROUND WINS', CX, ry);
+    ry += 17;
+    for (let i = 0; i < totalRounds; i++) {
+      const px = CX - (totalRounds*20)/2 + i*20 + 10;
+      ctx.beginPath(); ctx.arc(px, ry, 7, 0, Math.PI*2);
+      ctx.fillStyle = i<roundsWon[0] ? '#4488ff' : totalRounds-1-i<roundsWon[1] ? '#ff4444' : '#252530';
+      ctx.fill(); ctx.strokeStyle='#444'; ctx.lineWidth=1; ctx.stroke();
+    }
+    ry += 26;
+
+    // Prompt
+    const prompt = (!matchOver && roundEndTimer > 0)
+      ? `Next round in ${Math.ceil(roundEndTimer/60)}…`
+      : 'Press  SPACE  or tap to continue';
+    ctx.font = '13px sans-serif'; ctx.fillStyle = '#666'; ctx.textAlign = 'center';
+    ctx.fillText(prompt, CX, ry);
+  }
+
   ctx.restore();
 }
 
@@ -899,6 +1006,7 @@ window.Game = {
       roundEndMsg, roundEndTimer,
       roundsWon: [...roundsWon],
       currentRound, totalRounds,
+      roundStats: roundStats ? { ...roundStats, p1: { ...roundStats.p1 }, p2: { ...roundStats.p2 } } : null,
     };
   },
   applyState(s) {
@@ -911,6 +1019,7 @@ window.Game = {
     roundEndMsg = s.roundEndMsg; roundEndTimer = s.roundEndTimer;
     roundsWon = [...s.roundsWon];
     currentRound = s.currentRound; totalRounds = s.totalRounds;
+    roundStats = s.roundStats ? { ...s.roundStats, p1: { ...s.roundStats.p1 }, p2: { ...s.roundStats.p2 } } : null;
   },
 };
 
