@@ -21,12 +21,10 @@
     font-family: sans-serif;
   }
   canvas {
-    border-radius: 12px;
     display: block;
-    /* Scale to fit any screen while preserving the 820×490 aspect ratio.
-       min() picks whichever dimension would overflow first. */
-    width: min(820px, 100vw, calc(100vh * 820 / 490));
-    height: auto;
+    /* Fill the viewport while preserving 820×490 aspect ratio. */
+    width: min(100vw, calc(100vh * 820 / 490));
+    height: min(100vh, calc(100vw * 490 / 820));
     touch-action: none;
   }
   .controls {

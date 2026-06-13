@@ -375,6 +375,7 @@ function startFight() {
   phase = 'fight';
   SFX.bell();
   window.BGM?.setPhase('fight');
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
 }
 
 function startNextRound() {
@@ -984,13 +985,21 @@ function drawHUD() {
     ctx.fillStyle=i<roundsWon[0]?'#4488ff':(totalRounds-1-i<roundsWon[1]?'#ff4444':'#333');
     ctx.fill();ctx.strokeStyle='#666';ctx.lineWidth=1;ctx.stroke();
   }
-  // Mute button — bottom-right corner
-  const mx = W-36, my = H-14, muted = window.BGM?.muted;
+  // Mute + fullscreen buttons — bottom-right corner
+  const muted = window.BGM?.muted;
+  const isFS = !!document.fullscreenElement;
   ctx.save();
   ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.beginPath(); ctx.roundRect(mx-18, my-12, 36, 20, 6); ctx.fill();
-  ctx.font = '13px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = muted ? '#666' : '#aaa';
-  ctx.fillText(muted ? '🔇' : '🔊', mx, my+1);
+  ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
+  // Mute
+  ctx.beginPath(); ctx.roundRect(W-54, H-26, 36, 20, 6); ctx.fill();
+  ctx.fillStyle = muted ? '#666' : '#aaa';
+  ctx.fillText(muted ? '🔇' : '🔊', W-36, H-13);
+  // Fullscreen
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.beginPath(); ctx.roundRect(W-96, H-26, 36, 20, 6); ctx.fill();
+  ctx.fillStyle = '#aaa';
+  ctx.fillText(isFS ? '⛶' : '⛶', W-78, H-13);
   ctx.restore();
   ctx.textAlign='left';
 }
@@ -1687,10 +1696,9 @@ function draw() {
 canvas.addEventListener('click', e => {
   const rect=canvas.getBoundingClientRect();
   const sx=(e.clientX-rect.left)*(W/rect.width), sy=(e.clientY-rect.top)*(H/rect.height);
-  // Mute button (bottom-right) — always clickable regardless of phase
-  if (sx >= W-54 && sx <= W-2 && sy >= H-26 && sy <= H-2) {
-    window.BGM?.toggle(); return;
-  }
+  // Mute / fullscreen buttons (bottom-right) — always clickable
+  if (sx >= W-54 && sx <= W-18 && sy >= H-26 && sy <= H-6) { window.BGM?.toggle(); return; }
+  if (sx >= W-96 && sx <= W-60 && sy >= H-26 && sy <= H-6) { _toggleFullscreen(); return; }
   if(phase==='charSelect'){
     // CPU toggle button
     const cpuBtnX=W-116, cpuBtnY=H-54, cpuBtnW=108, cpuBtnH=26;
@@ -1737,6 +1745,14 @@ canvas.addEventListener('click', e => {
   }
 });
 
+function _toggleFullscreen() {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen().catch(() => {});
+  } else {
+    document.exitFullscreen().catch(() => {});
+  }
+}
+
 function _cpuCycle() {
   const order = ['off', 'easy', 'medium', 'hard'];
   cpuDifficulty = order[(order.indexOf(cpuDifficulty) + 1) % order.length];
@@ -1751,6 +1767,7 @@ function _checkBothConfirmed() {
 
 document.addEventListener('keydown', e=>{
   if(e.key==='m'||e.key==='M'){ window.BGM?.toggle(); return; }
+  if(e.key==='F11'){ e.preventDefault(); _toggleFullscreen(); return; }
   if(e.key==='Escape'){
     if(phase==='stats'||phase==='achievements'){ phase='menu'; return; }
   }
