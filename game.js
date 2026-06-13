@@ -121,6 +121,8 @@ let roundEndTimer = 0;
 let roundStats = null;
 let p1CharIdx = 0, p2CharIdx = 1;
 let p1Confirmed = false, p2Confirmed = false;
+let cpuMode = false;
+let _cpuTimer = 0, _cpuHoldLeft = false, _cpuHoldRight = false, _cpuHoldDuck = false;
 let roundFrame = 0;
 let hitStop = 0;
 let shakeT = 0;
@@ -151,6 +153,7 @@ function spawnFighters() {
   floaties = [];
   roundFrame = 0;
   resetDoubleTap();
+  _cpuReactTimer = 0; _cpuHoldLeft = false; _cpuHoldRight = false; _cpuHoldDuck = false;
 }
 
 function startGame() {
@@ -159,6 +162,7 @@ function startGame() {
   roundStats = null;
   p1Confirmed = false;
   p2Confirmed = false;
+  cpuMode = false;
   phase = 'charSelect';
   window.BGM?.setPhase('menu');
   window.netHooks.onStartGame();
@@ -296,6 +300,81 @@ function checkSuper(a, d) {
   }
 }
 
+// ── CPU AI ────────────────────────────────────────────────────────────────────
+// Writes to inputState.p2 each frame when cpuMode is true.
+// Clears all p2 input first, then decides what to do based on game state.
+const CPU_REACT_DELAY = 18; // frames of reaction lag
+let _cpuReactTimer = 0;
+let _cpuAction = null; // { move, attack, duck, dash }
+
+function updateCPU() {
+  if (!cpuMode || phase !== 'fight' || !p1 || !p2) return;
+
+  // Clear sustained inputs each frame
+  inputState.p2.left  = _cpuHoldLeft;
+  inputState.p2.right = _cpuHoldRight;
+  inputState.p2.duck  = _cpuHoldDuck;
+  // One-shot inputs reset every frame
+  inputState.p2.punch = false;
+  inputState.p2.kick  = false;
+  inputState.p2.super = false;
+  inputState.p2.jump  = false;
+
+  if (p2.knockdown) { _cpuHoldLeft=false; _cpuHoldRight=false; _cpuHoldDuck=false; return; }
+
+  _cpuReactTimer--;
+  if (_cpuReactTimer > 0) return; // still in reaction delay
+
+  const dx = p1.x - p2.x;   // positive → P1 is to our right
+  const absDx = Math.abs(dx);
+  const inPunchRange = absDx < PUNCH_REACH - 10;
+  const inKickRange  = absDx < KICK_REACH;
+  const inSuperRange = absDx < SUPER_REACH + 20;
+
+  // Decide next action with some randomness to be beatable
+  const roll = Math.random();
+
+  if (p1.supering && inSuperRange && roll < 0.70) {
+    // Dodge by ducking or jumping away
+    if (roll < 0.40) {
+      _cpuHoldDuck = true;
+      _cpuHoldLeft = false; _cpuHoldRight = false;
+    } else {
+      inputState.p2.jump = true;
+      _cpuHoldLeft = dx > 0; _cpuHoldRight = dx < 0; // move away
+      _cpuHoldDuck = false;
+    }
+    _cpuReactTimer = CPU_REACT_DELAY;
+  } else if (inPunchRange && roll < 0.55) {
+    // Attack: mix punch / kick / super
+    _cpuHoldLeft=false; _cpuHoldRight=false; _cpuHoldDuck=false;
+    if (p2.superCd <= 0 && roll < 0.08) {
+      inputState.p2.super = true;
+    } else if (p2.kickCd <= 0 && roll < 0.22) {
+      inputState.p2.kick = true;
+    } else {
+      inputState.p2.punch = true;
+    }
+    _cpuReactTimer = CPU_REACT_DELAY + Math.floor(Math.random() * 10);
+  } else if (absDx > PUNCH_REACH + 60) {
+    // Approach: move toward P1
+    _cpuHoldLeft  = dx < 0;
+    _cpuHoldRight = dx > 0;
+    _cpuHoldDuck  = false;
+    // Occasionally dash in
+    if (absDx > PUNCH_REACH + 130 && p2.dashCd <= 0 && roll < 0.15) {
+      inputState.p2.dash = dx < 0 ? -1 : 1;
+    }
+    _cpuReactTimer = 8;
+  } else {
+    // Neutral range: light pressure or sidestep
+    _cpuHoldLeft=false; _cpuHoldRight=false; _cpuHoldDuck=false;
+    if (roll < 0.30) inputState.p2.punch = true;
+    else if (roll < 0.40 && p2.kickCd <= 0) inputState.p2.kick = true;
+    _cpuReactTimer = CPU_REACT_DELAY;
+  }
+}
+
 // ── Update ────────────────────────────────────────────────────────────────────
 function update() {
   if (phase==='menu' || phase==='charSelect') return;
@@ -311,6 +390,8 @@ function update() {
     return;
   }
   if (phase==='gameOver') return;
+
+  updateCPU();
 
   if (hitStop > 0) { hitStop--; return; }
   if (shakeT > 0) shakeT--;
@@ -907,6 +988,15 @@ function drawCharSelect() {
     }
   }
 
+  // CPU toggle pill button (always visible, bottom-right area)
+  const cpuBtnX = W - 110, cpuBtnY = H - 54, cpuBtnW = 96, cpuBtnH = 26;
+  ctx.fillStyle = cpuMode ? 'rgba(255,160,0,0.25)' : 'rgba(60,60,60,0.60)';
+  ctx.beginPath(); ctx.roundRect(cpuBtnX, cpuBtnY, cpuBtnW, cpuBtnH, 8); ctx.fill();
+  ctx.strokeStyle = cpuMode ? '#ffaa00' : '#444'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.roundRect(cpuBtnX, cpuBtnY, cpuBtnW, cpuBtnH, 8); ctx.stroke();
+  ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = cpuMode ? '#ffaa00' : '#666';
+  ctx.fillText(cpuMode ? '🤖 CPU ON  [C]' : '🤖 CPU OFF [C]', cpuBtnX + cpuBtnW/2, cpuBtnY + 17);
+
   // Bottom status
   if (p1Confirmed && p2Confirmed) {
     ctx.font = 'bold 26px sans-serif'; ctx.textAlign = 'center';
@@ -919,8 +1009,13 @@ function drawCharSelect() {
     ctx.fillStyle = p1Confirmed ? '#4488ff' : '#555';
     ctx.fillText(p1Confirmed ? `✓ P1  ${CHARACTERS[p1CharIdx].name}` : 'P1: pick a fighter', 26, H - 22);
     ctx.textAlign = 'right';
-    ctx.fillStyle = p2Confirmed ? '#ff4444' : '#555';
-    ctx.fillText(p2Confirmed ? `P2  ${CHARACTERS[p2CharIdx].name}  ✓` : 'P2: pick a fighter', W - 26, H - 22);
+    if (cpuMode) {
+      ctx.fillStyle = '#ffaa00';
+      ctx.fillText(`CPU  ${CHARACTERS[p2CharIdx].name}  🤖`, W - 26, H - 22);
+    } else {
+      ctx.fillStyle = p2Confirmed ? '#ff4444' : '#555';
+      ctx.fillText(p2Confirmed ? `P2  ${CHARACTERS[p2CharIdx].name}  ✓` : 'P2: pick a fighter', W - 26, H - 22);
+    }
   }
 
   ctx.restore();
@@ -1244,17 +1339,22 @@ canvas.addEventListener('click', e => {
     window.BGM?.toggle(); return;
   }
   if(phase==='charSelect'){
+    // CPU toggle button
+    const cpuBtnX=W-110, cpuBtnY=H-54, cpuBtnW=96, cpuBtnH=26;
+    if(sx>=cpuBtnX&&sx<=cpuBtnX+cpuBtnW&&sy>=cpuBtnY&&sy<=cpuBtnY+cpuBtnH){
+      if(!p1Confirmed&&!p2Confirmed){ cpuMode=!cpuMode; SFX.click(); if(cpuMode) p2Confirmed=false; }
+      return;
+    }
     const CW=158,GAP=12,cardY=88,CH=285;
     const totalW=CHARACTERS.length*CW+(CHARACTERS.length-1)*GAP;
     const startX=(W-totalW)/2;
     for(let i=0;i<CHARACTERS.length;i++){
       const cx=startX+i*(CW+GAP);
       if(sx>=cx&&sx<=cx+CW&&sy>=cardY&&sy<=cardY+CH){
-        // left half of canvas → P1, right half → P2
         if(sx < W/2){
           if(p1CharIdx===i&&!p1Confirmed){ p1Confirmed=true; SFX.bell(); _checkBothConfirmed(); }
           else if(!p1Confirmed){ p1CharIdx=i; SFX.click(); }
-        } else {
+        } else if(!cpuMode){
           if(p2CharIdx===i&&!p2Confirmed){ p2Confirmed=true; SFX.bell(); _checkBothConfirmed(); }
           else if(!p2Confirmed){ p2CharIdx=i; SFX.click(); }
         }
@@ -1281,6 +1381,7 @@ canvas.addEventListener('click', e => {
 });
 
 function _checkBothConfirmed() {
+  if (cpuMode) p2Confirmed = true;
   if (p1Confirmed && p2Confirmed) setTimeout(startFight, 420);
 }
 
@@ -1291,9 +1392,15 @@ document.addEventListener('keydown', e=>{
     if(e.key==='a'||e.key==='A'){ if(!p1Confirmed){p1CharIdx=(p1CharIdx+N-1)%N;SFX.click();} return; }
     if(e.key==='d'||e.key==='D'){ if(!p1Confirmed){p1CharIdx=(p1CharIdx+1)%N;SFX.click();} return; }
     if(e.key==='f'||e.key==='F'){ if(!p1Confirmed){p1Confirmed=true;SFX.bell();_checkBothConfirmed();} return; }
-    if(e.key==='ArrowLeft') { e.preventDefault(); if(!p2Confirmed){p2CharIdx=(p2CharIdx+N-1)%N;SFX.click();} return; }
-    if(e.key==='ArrowRight'){ e.preventDefault(); if(!p2Confirmed){p2CharIdx=(p2CharIdx+1)%N;SFX.click();} return; }
-    if(e.key==='l'||e.key==='L'){ if(!p2Confirmed){p2Confirmed=true;SFX.bell();_checkBothConfirmed();} return; }
+    if(e.key==='c'||e.key==='C'){
+      if(!p1Confirmed&&!p2Confirmed){ cpuMode=!cpuMode; SFX.click(); if(cpuMode) p2Confirmed=false; }
+      return;
+    }
+    if(!cpuMode){
+      if(e.key==='ArrowLeft') { e.preventDefault(); if(!p2Confirmed){p2CharIdx=(p2CharIdx+N-1)%N;SFX.click();} return; }
+      if(e.key==='ArrowRight'){ e.preventDefault(); if(!p2Confirmed){p2CharIdx=(p2CharIdx+1)%N;SFX.click();} return; }
+      if(e.key==='l'||e.key==='L'){ if(!p2Confirmed){p2Confirmed=true;SFX.bell();_checkBothConfirmed();} return; }
+    }
     return;
   }
   if(e.key===' '){
