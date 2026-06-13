@@ -587,9 +587,9 @@ function checkSuper(a, d) {
 
 // ── CPU AI ────────────────────────────────────────────────────────────────────
 const CPU_LEVELS = {
-  easy:   { react: 38, jitter: 20, attackRoll: 0.28, dodgeChance: 0.25, dashChance: 0.04, superRoll: 0.03, kickRoll: 0.10, approachTick: 14 },
-  medium: { react: 18, jitter: 10, attackRoll: 0.55, dodgeChance: 0.70, dashChance: 0.15, superRoll: 0.08, kickRoll: 0.22, approachTick:  8 },
-  hard:   { react:  6, jitter:  4, attackRoll: 0.78, dodgeChance: 0.93, dashChance: 0.35, superRoll: 0.16, kickRoll: 0.40, approachTick:  4 },
+  easy:   { react: 22, jitter: 14, attackRoll: 0.50, dodgeChance: 0.22, dashChance: 0.07, superRoll: 0.06, kickRoll: 0.18, approachTick: 10 },
+  medium: { react: 12, jitter:  7, attackRoll: 0.72, dodgeChance: 0.68, dashChance: 0.22, superRoll: 0.14, kickRoll: 0.32, approachTick:  6 },
+  hard:   { react:  5, jitter:  3, attackRoll: 0.90, dodgeChance: 0.92, dashChance: 0.48, superRoll: 0.25, kickRoll: 0.50, approachTick:  3 },
 };
 
 const ARCADE_OPPONENTS = [
@@ -626,6 +626,11 @@ function updateCPU() {
   const inSuperRange = absDx < SUPER_REACH + 20;
   const roll = Math.random();
 
+  // Boost aggression when P1 is low HP
+  const lowHp = p1.hp < p1.maxHp * 0.40;
+  const atkRoll  = lowHp ? Math.min(0.96, cfg.attackRoll * 1.35) : cfg.attackRoll;
+  const reactMul = lowHp ? 0.65 : 1.0;
+
   if (p1.supering && inSuperRange && roll < cfg.dodgeChance) {
     if (roll < cfg.dodgeChance * 0.5) {
       _cpuHoldDuck = true;
@@ -635,8 +640,8 @@ function updateCPU() {
       _cpuHoldLeft = dx > 0; _cpuHoldRight = dx < 0;
       _cpuHoldDuck = false;
     }
-    _cpuReactTimer = cfg.react;
-  } else if (inPunchRange && roll < cfg.attackRoll) {
+    _cpuReactTimer = Math.ceil(cfg.react * reactMul);
+  } else if (inPunchRange && roll < atkRoll) {
     _cpuHoldLeft=false; _cpuHoldRight=false; _cpuHoldDuck=false;
     if (p2.superCd <= 0 && roll < cfg.superRoll) {
       inputState.p2.super = true;
@@ -645,20 +650,20 @@ function updateCPU() {
     } else {
       inputState.p2.punch = true;
     }
-    _cpuReactTimer = cfg.react + Math.floor(Math.random() * cfg.jitter);
+    _cpuReactTimer = Math.ceil((cfg.react + Math.floor(Math.random() * cfg.jitter)) * reactMul);
   } else if (absDx > PUNCH_REACH - 15) {
     _cpuHoldLeft  = dx < 0;
     _cpuHoldRight = dx > 0;
     _cpuHoldDuck  = false;
-    if (absDx > PUNCH_REACH + 80 && p2.dashCd <= 0 && roll < cfg.dashChance) {
+    if (absDx > PUNCH_REACH + 60 && p2.dashCd <= 0 && roll < cfg.dashChance) {
       inputState.p2.dash = dx < 0 ? -1 : 1;
     }
-    _cpuReactTimer = cfg.approachTick;
+    _cpuReactTimer = Math.ceil(cfg.approachTick * reactMul);
   } else {
     _cpuHoldLeft=false; _cpuHoldRight=false; _cpuHoldDuck=false;
-    if (roll < cfg.attackRoll * 0.55) inputState.p2.punch = true;
-    else if (roll < cfg.attackRoll * 0.72 && p2.kickCd <= 0) inputState.p2.kick = true;
-    _cpuReactTimer = cfg.react;
+    if (roll < atkRoll * 0.72) inputState.p2.punch = true;
+    else if (roll < atkRoll * 0.88 && p2.kickCd <= 0) inputState.p2.kick = true;
+    _cpuReactTimer = Math.ceil(cfg.react * reactMul);
   }
 }
 
