@@ -149,6 +149,7 @@ function startGame() {
   spawnFighters();
   phase = 'fight';
   SFX.bell();
+  window.BGM?.setPhase('fight');
   window.netHooks.onStartGame();
 }
 
@@ -157,6 +158,7 @@ function startNextRound() {
   spawnFighters();
   phase = 'fight';
   SFX.bell();
+  window.BGM?.setPhase('fight');
   window.netHooks.onStartNext();
 }
 
@@ -450,6 +452,7 @@ function _endRound(msg, p1Win, p2Win) {
   roundsWon[0]+=p1Win; roundsWon[1]+=p2Win;
   roundEndMsg = msg;
   roundEndTimer = 180;
+  window.BGM?.setPhase('menu');
   roundStats = {
     p1: { hp: p1.hp, knockdowns: p1.knockdowns, maxCombo: p1.maxCombo, dmgDealt: Math.round(MAX_HP - p2.hp) },
     p2: { hp: p2.hp, knockdowns: p2.knockdowns, maxCombo: p2.maxCombo, dmgDealt: Math.round(MAX_HP - p1.hp) },
@@ -674,6 +677,14 @@ function drawHUD() {
     ctx.fillStyle=i<roundsWon[0]?'#4488ff':(totalRounds-1-i<roundsWon[1]?'#ff4444':'#333');
     ctx.fill();ctx.strokeStyle='#666';ctx.lineWidth=1;ctx.stroke();
   }
+  // Mute button — bottom-right corner
+  const mx = W-36, my = H-14, muted = window.BGM?.muted;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.beginPath(); ctx.roundRect(mx-18, my-12, 36, 20, 6); ctx.fill();
+  ctx.font = '13px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = muted ? '#666' : '#aaa';
+  ctx.fillText(muted ? '🔇' : '🔊', mx, my+1);
+  ctx.restore();
   ctx.textAlign='left';
 }
 
@@ -1046,9 +1057,13 @@ function draw() {
 
 // ── Input for state transitions ───────────────────────────────────────────────
 canvas.addEventListener('click', e => {
-  if (!window.netHooks.canMenuInput()) return;
   const rect=canvas.getBoundingClientRect();
   const sx=(e.clientX-rect.left)*(W/rect.width), sy=(e.clientY-rect.top)*(H/rect.height);
+  // Mute button (bottom-right) — always clickable regardless of phase
+  if (sx >= W-54 && sx <= W-2 && sy >= H-26 && sy <= H-2) {
+    window.BGM?.toggle(); return;
+  }
+  if (!window.netHooks.canMenuInput()) return;
   if(phase==='menu'){
     [1,3,5].forEach((r,i)=>{
       const bx=W/2-130+i*110,by=205,bw=90,bh=50;
@@ -1066,6 +1081,7 @@ canvas.addEventListener('click', e => {
 });
 
 document.addEventListener('keydown', e=>{
+  if(e.key==='m'||e.key==='M'){ window.BGM?.toggle(); return; }
   if(e.key===' '){
     if (!window.netHooks.canMenuInput()) return;
     if(phase==='menu'){ totalRounds=menuSelected; startGame(); return; }
