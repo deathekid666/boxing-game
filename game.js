@@ -881,21 +881,126 @@ function drawRoundEnd() {
   ctx.restore();
 }
 
-function drawGameOver(){
-  ctx.fillStyle='rgba(0,0,0,0.78)';ctx.fillRect(0,0,W,H);
-  ctx.save();ctx.textAlign='center';
-  const needed=Math.ceil(totalRounds/2);
-  let title,sub;
-  if(roundsWon[0]>=needed){title=`🟦 ${window.playerNames.p1.toUpperCase()} IS CHAMPION!`;sub=`${roundsWon[0]} — ${roundsWon[1]}`;}
-  else if(roundsWon[1]>=needed){title=`🟥 ${window.playerNames.p2.toUpperCase()} IS CHAMPION!`;sub=`${roundsWon[0]} — ${roundsWon[1]}`;}
-  else{title="IT'S A DRAW!";sub=`${roundsWon[0]} — ${roundsWon[1]}`;}
-  ctx.font='bold 42px sans-serif';ctx.strokeStyle='#000';ctx.lineWidth=7;
-  ctx.strokeText(title,W/2,H/2-30);ctx.fillStyle='#ffe44d';ctx.fillText(title,W/2,H/2-30);
-  ctx.font='bold 32px sans-serif';ctx.strokeStyle='#000';ctx.lineWidth=5;
-  ctx.strokeText(sub,W/2,H/2+20);ctx.fillStyle='#fff';ctx.fillText(sub,W/2,H/2+20);
-  ctx.font='18px sans-serif';ctx.lineWidth=3;
-  ctx.strokeText('Press SPACE or click to play again',W/2,H/2+68);
-  ctx.fillStyle='#aaa';ctx.fillText('Press SPACE or click to play again',W/2,H/2+68);
+function drawGameOver() {
+  const needed = Math.ceil(totalRounds / 2);
+  let titleText, titleCol;
+  if (roundsWon[0] >= needed) {
+    titleText = `${window.playerNames.p1.toUpperCase()}  IS  CHAMPION!`;
+    titleCol  = '#4488ff';
+  } else if (roundsWon[1] >= needed) {
+    titleText = `${window.playerNames.p2.toUpperCase()}  IS  CHAMPION!`;
+    titleCol  = '#ff4444';
+  } else {
+    titleText = "IT'S  A  DRAW!";
+    titleCol  = '#ffe44d';
+  }
+
+  ctx.fillStyle = 'rgba(0,0,0,0.82)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.save();
+
+  // ── Card ─────────────────────────────────────────────────────────────────
+  const CX = W/2, CW = 640, CH = 410, top = H/2 - CH/2 - 10;
+  const L = CX - 290, R = CX + 290;
+  ctx.fillStyle = 'rgba(12,14,22,0.97)';
+  ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.roundRect(CX-CW/2, top, CW, CH, 14); ctx.fill(); ctx.stroke();
+
+  ctx.textAlign = 'center';
+
+  // Score label
+  ctx.font = '13px sans-serif'; ctx.fillStyle = '#555';
+  ctx.fillText(`${roundsWon[0]}  —  ${roundsWon[1]}`, CX, top + 26);
+
+  // Champion title
+  ctx.font = 'bold 24px sans-serif';
+  ctx.strokeStyle = '#000'; ctx.lineWidth = 5;
+  ctx.strokeText(titleText, CX, top + 56);
+  ctx.fillStyle = titleCol; ctx.fillText(titleText, CX, top + 56);
+
+  // Separator
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(L, top + 68); ctx.lineTo(R, top + 68); ctx.stroke();
+
+  if (roundStats) {
+    const st = roundStats;
+
+    // Column headers
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'left';  ctx.fillStyle = '#4488ff'; ctx.fillText(window.playerNames.p1, L, top + 88);
+    ctx.textAlign = 'right'; ctx.fillStyle = '#ff4444'; ctx.fillText(window.playerNames.p2, R, top + 88);
+
+    // HP bars
+    const bary = top + 98, barh = 15, barw = 245;
+    const drawHpBar = (bx, val, flip) => {
+      ctx.fillStyle = '#1a1a1a'; ctx.beginPath(); ctx.roundRect(bx, bary, barw, barh, 3); ctx.fill();
+      const fw = Math.max(0, (val / MAX_HP) * barw);
+      if (fw > 0) {
+        ctx.fillStyle = `hsl(${(val/MAX_HP)*120},80%,45%)`;
+        ctx.beginPath(); ctx.roundRect(flip ? bx+barw-fw : bx, bary, fw, barh, 3); ctx.fill();
+      }
+      ctx.strokeStyle = '#fff2'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect(bx, bary, barw, barh, 3); ctx.stroke();
+    };
+    drawHpBar(L, st.p1.hp, false);
+    drawHpBar(R - barw, st.p2.hp, true);
+
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'left';  ctx.fillStyle = '#999'; ctx.fillText(`${Math.ceil(st.p1.hp)} HP`, L, bary + barh + 13);
+    ctx.textAlign = 'right'; ctx.fillStyle = '#999'; ctx.fillText(`${Math.ceil(st.p2.hp)} HP`, R, bary + barh + 13);
+
+    // Stat rows
+    const rows = [
+      { label: 'Knockdowns',
+        p1v: `▼ ${st.p1.knockdowns}`, p2v: `▼ ${st.p2.knockdowns}`,
+        p1c: st.p1.knockdowns > 0 ? '#ff8800' : '#555',
+        p2c: st.p2.knockdowns > 0 ? '#ff8800' : '#555' },
+      { label: 'Best Combo',
+        p1v: st.p1.maxCombo >= 2 ? `${st.p1.maxCombo} HIT` : '—',
+        p2v: st.p2.maxCombo >= 2 ? `${st.p2.maxCombo} HIT` : '—',
+        p1c: st.p1.maxCombo >= 6 ? '#ffd700' : st.p1.maxCombo >= 4 ? '#ff4444' : st.p1.maxCombo >= 2 ? '#ff8800' : '#555',
+        p2c: st.p2.maxCombo >= 6 ? '#ffd700' : st.p2.maxCombo >= 4 ? '#ff4444' : st.p2.maxCombo >= 2 ? '#ff8800' : '#555' },
+      { label: 'Damage Dealt',
+        p1v: String(st.p1.dmgDealt), p2v: String(st.p2.dmgDealt),
+        p1c: '#ccc', p2c: '#ccc' },
+    ];
+
+    let ry = top + 158;
+    for (const row of rows) {
+      ctx.font = '10px sans-serif'; ctx.fillStyle = '#555'; ctx.textAlign = 'center';
+      ctx.fillText(row.label, CX, ry);
+      ctx.font = 'bold 15px sans-serif';
+      ctx.textAlign = 'left';  ctx.fillStyle = row.p1c; ctx.fillText(row.p1v, L, ry);
+      ctx.textAlign = 'right'; ctx.fillStyle = row.p2c; ctx.fillText(row.p2v, R, ry);
+      ry += 30;
+    }
+
+    // Separator
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(L, ry + 4); ctx.lineTo(R, ry + 4); ctx.stroke();
+    ry += 20;
+
+    // Round win pips
+    ctx.font = '10px sans-serif'; ctx.fillStyle = '#555'; ctx.textAlign = 'center';
+    ctx.fillText('ROUND WINS', CX, ry);
+    ry += 17;
+    for (let i = 0; i < totalRounds; i++) {
+      const px = CX - (totalRounds * 20) / 2 + i * 20 + 10;
+      ctx.beginPath(); ctx.arc(px, ry, 7, 0, Math.PI * 2);
+      ctx.fillStyle = i < roundsWon[0] ? '#4488ff' : totalRounds-1-i < roundsWon[1] ? '#ff4444' : '#252530';
+      ctx.fill(); ctx.strokeStyle = '#444'; ctx.lineWidth = 1; ctx.stroke();
+    }
+    ry += 26;
+
+    // Prompt
+    ctx.font = '13px sans-serif'; ctx.fillStyle = '#666'; ctx.textAlign = 'center';
+    ctx.fillText('Press  SPACE  or tap to play again', CX, ry);
+  } else {
+    // Fallback if roundStats not available
+    ctx.font = '14px sans-serif'; ctx.fillStyle = '#666'; ctx.textAlign = 'center';
+    ctx.fillText('Press  SPACE  or tap to play again', CX, top + CH - 28);
+  }
+
   ctx.restore();
 }
 
