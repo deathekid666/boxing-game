@@ -119,7 +119,7 @@ function mkFighter(x, color, dir) {
   return {
     x, y: 315, color, dir, depth: 0.5, jz: 0, jvz: 0, jumpCd: 0,
     hp: MAX_HP, hpDisplay: MAX_HP, hpFlash: 0,
-    knockdown: false, knockdownT: 0, knockdownInvul: 0,
+    knockdown: false, knockdownT: 0, knockdownInvul: 0, knockdowns: 0,
     shield: MAX_SHIELD,
     shieldTimer: 0, vx: 0,
     punching: false, punchT: 0, punchCd: 0,
@@ -184,7 +184,7 @@ function applyHit(attacker, defender, dmg, type, isTip) {
   if (d > 0) {
     defender.hpFlash = 10;
     if (defender.hp > 0 && defender.hp <= KD_THRESHOLD && !defender.knockdown && defender.knockdownInvul <= 0) {
-      defender.knockdown = true; defender.knockdownT = 0;
+      defender.knockdown = true; defender.knockdownT = 0; defender.knockdowns++;
       defender.punching = false; defender.kicking = false; defender.supering = false; defender.dashT = 0;
       floaties.push({ x: defender.x, y: fighterScreenY(defender)-110, vx:0, vy:-1.5, t:0, col:'#ffe44d', size:32, txt:'DOWN!' });
     }
@@ -638,6 +638,11 @@ function drawHUD() {
   const remaining=Math.max(0,Math.ceil((ROUND_TIME-roundFrame)/60));
   ctx.fillStyle=remaining<=10?'#ff4444':'#fff'; ctx.font='bold 22px sans-serif';
   ctx.fillText(`${remaining}`,W/2,78);
+  ctx.font='bold 12px sans-serif';
+  ctx.textAlign='left';  ctx.fillStyle=p1.knockdowns>0?'#ff8800':'#444';
+  ctx.fillText(`▼ ${p1.knockdowns}`,18,78);
+  ctx.textAlign='right'; ctx.fillStyle=p2.knockdowns>0?'#ff8800':'#444';
+  ctx.fillText(`▼ ${p2.knockdowns}`,W-18,78);
   for(let i=0;i<totalRounds;i++){
     const cx=W/2-(totalRounds*18)/2+i*18+9;
     ctx.beginPath();ctx.arc(cx,50,7,0,Math.PI*2);
