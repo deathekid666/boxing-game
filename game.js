@@ -101,12 +101,13 @@ const SUPER_HIT_R  = 60;      // world-px hit radius for super
 const JUMP_VZ      = -12;
 const GRAVITY      = 0.7;
 const JUMP_CD      = 30;
-const KD_THRESHOLD = 70;   // HP at or below this triggers knockdown on a damaging hit
-const KD_FALL      = 24;   // frames to fall to ground
-const KD_DOWN      = 120;  // frames lying down (~2 s at 60 fps, referee counts to 8)
-const KD_RISE      = 24;   // frames to stand back up
-const KD_TOTAL     = KD_FALL + KD_DOWN + KD_RISE;
-const KD_INVUL     = 90;   // invulnerability frames after rising
+const KD_FALL      = 10;   // frames to fall to ground
+const KD_DOWN      = 36;   // frames lying down (~0.6 s)
+const KD_RISE      = 14;   // frames to stand back up
+const KD_TOTAL     = KD_FALL + KD_DOWN + KD_RISE; // 60 frames ≈ 1 s
+const KD_INVUL     = 45;   // knockdown-immunity frames after rising (still hittable)
+const KD_MIN_DMG   = 14;   // min post-shield damage on a tip-hit to trigger knockdown
+const SHIELD_BREAK_STUN = 20; // frames of shield-broken vulnerability
 const COMBO_WINDOW = 110;  // frames to land the next hit before combo resets (~1.8 s)
 
 function depthToScreenY(depth) { return RING_BACK_Y + depth * (RING_FRONT_Y - RING_BACK_Y); }
@@ -350,7 +351,7 @@ function mkFighter(x, char, dir) {
     speed: char.speed, dmgMul: char.dmgMul, dashSpeed: char.dashSpeed,
     knockdown: false, knockdownT: 0, knockdownInvul: 0, knockdowns: 0,
     combo: 0, comboTimer: 0, maxCombo: 0,
-    shield: MAX_SHIELD,
+    shield: MAX_SHIELD, shieldBroken: false, shieldBrokenTimer: 0,
     shieldTimer: 0, vx: 0,
     punching: false, punchT: 0, punchCd: 0,
     kicking: false, kickT: 0, kickCd: 0,
@@ -470,28 +471,43 @@ function addFloat(x, y, col, type, dmg, isTip) {
 // ── Hit application ───────────────────────────────────────────────────────────
 function applyHit(attacker, defender, dmg, type, isTip) {
   let d = dmg * (attacker.dmgMul ?? 1.0);
-  const hadShield = defender.shield > 0;
-  if (defender.shield > 0) {
+
+  // Shield-broken: 25% bonus damage, no absorption, until stun expires
+  let justBrokeShield = false;
+  if (defender.shieldBroken) {
+    d *= 1.25;
+  } else if (defender.shield > 0) {
     const absorb = Math.min(defender.shield, d * 0.7);
     defender.shield = Math.max(0, defender.shield - absorb);
     d -= absorb;
-  }
-  defender.hp    = Math.max(0, defender.hp - d);
-  if (d > 0) {
-    defender.hpFlash = 10;
-    if (defender.hp > 0 && defender.hp <= KD_THRESHOLD && !defender.knockdown && defender.knockdownInvul <= 0) {
-      defender.knockdown = true; defender.knockdownT = 0; defender.knockdowns++;
-      defender.punching = false; defender.kicking = false; defender.supering = false; defender.dashT = 0;
-      floaties.push({ x: defender.x, y: fighterScreenY(defender)-110, vx:0, vy:-1.5, t:0, col:'#ffe44d', size:32, txt:'DOWN!' });
+    if (defender.shield === 0) {
+      justBrokeShield = true;
+      defender.shieldBroken = true;
+      defender.shieldBrokenTimer = SHIELD_BREAK_STUN;
+      floaties.push({ x: defender.x, y: fighterScreenY(defender)-130, vx:0, vy:-1.8, t:0, col:'#ff4444', size:22, txt:'SHIELD BREAK!' });
     }
   }
+
+  defender.hp = Math.max(0, defender.hp - d);
+  if (d > 0) {
+    defender.hpFlash = 10;
+    // Knockdown: super always, or tip-hit above damage threshold
+    const isHeavyHit = type === 'super' || (isTip && d >= KD_MIN_DMG);
+    if (isHeavyHit && !defender.knockdown && defender.knockdownInvul <= 0) {
+      defender.knockdown = true; defender.knockdownT = 0; defender.knockdowns++;
+      defender.punching = false; defender.kicking = false; defender.supering = false; defender.dashT = 0;
+      floaties.push({ x: defender.x, y: fighterScreenY(defender)-110, vx:0, vy:-1.5, t:0, col:'#ffe44d', size:28, txt:'DOWN!' });
+    }
+  }
+
   attacker.combo++;
   attacker.comboTimer = COMBO_WINDOW;
   if (attacker.combo > attacker.maxCombo) attacker.maxCombo = attacker.combo;
   defender.wobble = type==='super' ? 35 : 20;
   defender.hit    = type==='super' ? 18 : 12;
   defender.vx     = attacker.dir * (type==='super' ? 8 : 4);
-  defender.shieldTimer = SHIELD_REGEN_DELAY;
+  // shieldTimer only resets when not in shield-break stun
+  if (!defender.shieldBroken) defender.shieldTimer = SHIELD_REGEN_DELAY;
   addFloat(defender.x, fighterScreenY(defender)-100, attacker.color, type, d, isTip);
 
   hitStop  = type==='super' ? 14 : (isTip ? 8 : 5);
@@ -503,8 +519,8 @@ function applyHit(attacker, defender, dmg, type, isTip) {
   else { SFX.punch(); navigator.vibrate?.(30); }
   if (attacker.combo >= 3) SFX.impact(attacker.combo);
 
-  if (hadShield && defender.shield===0) setTimeout(()=>SFX.shieldBreak(), 80);
-  else if (hadShield) setTimeout(()=>SFX.shieldBlock(), 30);
+  if (justBrokeShield) setTimeout(()=>SFX.shieldBreak(), 80);
+  else if (!defender.shieldBroken && defender.shield > 0) setTimeout(()=>SFX.shieldBlock(), 30);
   if (defender.hp <= 0) { setTimeout(()=>SFX.ko(), 150); navigator.vibrate?.([100,50,100]); }
 }
 
@@ -515,7 +531,7 @@ function tipDamage(fistLen, maxReach, baseDmg, tipDmg) {
 }
 
 function checkPunch(a, d) {
-  if (d.knockdown || d.knockdownInvul > 0) return;
+  if (d.knockdownInvul > 0) return;
   if (!a.punching) return;
   const t = Math.sin(a.punchT * Math.PI);
   if (t < 0.45) return;
@@ -533,7 +549,7 @@ function checkPunch(a, d) {
   }
 }
 function checkKick(a, d) {
-  if (d.knockdown || d.knockdownInvul > 0) return;
+  if (d.knockdownInvul > 0) return;
   if (!a.kicking) return;
   const t = Math.sin(a.kickT * Math.PI);
   if (t < 0.4) return;
@@ -551,7 +567,7 @@ function checkKick(a, d) {
   }
 }
 function checkSuper(a, d) {
-  if (d.knockdown || d.knockdownInvul > 0) return;
+  if (d.knockdownInvul > 0) return;
   if (!a.supering) return;
   const t = Math.sin(a.superT * Math.PI);
   if (t < 0.35) return;
@@ -799,12 +815,19 @@ function update() {
     if (p.knockdown) {
       if (p.knockdownT === KD_FALL) SFX.stagger();
       const inDown = p.knockdownT >= KD_FALL && p.knockdownT < KD_FALL + KD_DOWN;
-      if (inDown && (p.knockdownT - KD_FALL) % 15 === 0) SFX.click();
+      if (inDown && (p.knockdownT - KD_FALL) % 12 === 0) SFX.click();
       p.knockdownT++;
       if (p.knockdownT >= KD_TOTAL) { p.knockdown=false; p.knockdownT=0; p.knockdownInvul=KD_INVUL; }
     }
-    if (p.shieldTimer>0) p.shieldTimer--;
-    else if (p.shield<MAX_SHIELD) p.shield=Math.min(MAX_SHIELD, p.shield+SHIELD_REGEN_RATE);
+    // Shield-break stun blocks regen timer; regen only starts after stun clears
+    if (p.shieldBrokenTimer > 0) {
+      p.shieldBrokenTimer--;
+      if (p.shieldBrokenTimer === 0) { p.shieldBroken = false; p.shieldTimer = SHIELD_REGEN_DELAY; }
+    } else if (p.shieldTimer > 0) {
+      p.shieldTimer--;
+    } else if (p.shield < MAX_SHIELD) {
+      p.shield = Math.min(MAX_SHIELD, p.shield + SHIELD_REGEN_RATE);
+    }
   }
 
   checkPunch(p1,p2); checkPunch(p2,p1);
@@ -926,7 +949,14 @@ function drawFighter(p) {
     ctx.beginPath(); ctx.arc(0,-30,55,0,Math.PI*2); ctx.fillStyle='#ffff00'; ctx.fill();
     ctx.restore();
   }
-  if (p.shield>0) {
+  if (p.shieldBroken) {
+    // Red pulsing ring — shield-break stun indicator
+    ctx.save();
+    ctx.globalAlpha = 0.55 + Math.sin(Date.now() / 40) * 0.30;
+    ctx.beginPath(); ctx.arc(0,-30,52,0,Math.PI*2);
+    ctx.strokeStyle='#ff3333'; ctx.lineWidth=3; ctx.stroke();
+    ctx.restore();
+  } else if (p.shield>0) {
     ctx.save();
     ctx.globalAlpha=(p.shield/MAX_SHIELD)*0.22;
     ctx.beginPath(); ctx.arc(0,-30,50,0,Math.PI*2); ctx.fillStyle='#44aaff'; ctx.fill();
@@ -1059,7 +1089,8 @@ function drawHUD() {
     ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = '#ff2222';
     ctx.beginPath(); ctx.roundRect(18, 14, bw, 20, 5); ctx.fill(); ctx.restore();
   }
-  drawBar(18,38,bw,10,p1.shield,MAX_SHIELD,'#44aaff','#88ddff');
+  drawBar(18,38,bw,10,p1.shield,MAX_SHIELD, p1.shieldBroken?'#ff3333':'#44aaff', p1.shieldBroken?'#ff6666':'#88ddff');
+  if (p1.shieldBroken) { const a=0.4+Math.sin(Date.now()/50)*0.3; ctx.save();ctx.globalAlpha=a;ctx.fillStyle='#ff2200';ctx.beginPath();ctx.roundRect(18,38,bw,10,3);ctx.fill();ctx.restore(); }
   ctx.fillStyle='#fff';ctx.font='bold 12px sans-serif';ctx.textAlign='left';
   ctx.fillText(`${window.playerNames.p1}  ${Math.ceil(p1.hp)}`,26,27);
   drawCdBtn(18,52,'KICK',p1.kickCd,KICK_CD,'#ffaa00');
@@ -1071,7 +1102,8 @@ function drawHUD() {
     ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = '#ff2222';
     ctx.beginPath(); ctx.roundRect(W-18-bw, 14, bw, 20, 5); ctx.fill(); ctx.restore();
   }
-  drawBar(W-18-bw,38,bw,10,p2.shield,MAX_SHIELD,'#88ddff','#44aaff');
+  drawBar(W-18-bw,38,bw,10,p2.shield,MAX_SHIELD, p2.shieldBroken?'#ff3333':'#88ddff', p2.shieldBroken?'#ff6666':'#44aaff');
+  if (p2.shieldBroken) { const a=0.4+Math.sin(Date.now()/50)*0.3; ctx.save();ctx.globalAlpha=a;ctx.fillStyle='#ff2200';ctx.beginPath();ctx.roundRect(W-18-bw,38,bw,10,3);ctx.fill();ctx.restore(); }
   ctx.fillStyle='#fff';ctx.font='bold 12px sans-serif';ctx.textAlign='right';
   ctx.fillText(`${Math.ceil(p2.hp)}  ${window.playerNames.p2}`,W-26,27);
   ctx.textAlign='left';
