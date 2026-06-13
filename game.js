@@ -333,6 +333,9 @@ let roundStats = null;
 let p1CharIdx = 0, p2CharIdx = 1;
 let p1Confirmed = false, p2Confirmed = false;
 let cpuDifficulty = 'off'; // 'off' | 'easy' | 'medium' | 'hard'
+let isArcade = false;
+let arcadeIdx = 0;
+let arcadeVSTimer = 0;
 let _cpuTimer = 0, _cpuHoldLeft = false, _cpuHoldRight = false, _cpuHoldDuck = false;
 let roundFrame = 0;
 let hitStop = 0;
@@ -393,6 +396,40 @@ function startVsAI(difficulty) {
   cpuDifficulty = difficulty || 'medium';
   phase = 'charSelect';
   window.BGM?.setPhase('menu');
+}
+
+function startArcade() {
+  isArcade = true;
+  arcadeIdx = 0;
+  const opp = ARCADE_OPPONENTS[0];
+  cpuDifficulty = opp.difficulty;
+  p2CharIdx = opp.charIdx;
+  window.playerNames.p2 = opp.name;
+  currentRound = 1;
+  roundsWon = [0, 0];
+  roundStats = null;
+  p1Confirmed = false;
+  p2Confirmed = false;
+  _rematchLocal = false;
+  _rematchOpp = false;
+  totalRounds = 1;
+  phase = 'charSelect';
+  window.BGM?.setPhase('menu');
+}
+
+function _nextArcadeFight() {
+  const opp = ARCADE_OPPONENTS[arcadeIdx];
+  cpuDifficulty = opp.difficulty;
+  p2CharIdx = opp.charIdx;
+  window.playerNames.p2 = opp.name;
+  currentRound = 1;
+  roundsWon = [0, 0];
+  roundStats = null;
+  p1Confirmed = true;
+  p2Confirmed = true;
+  arcadeVSTimer = 180;
+  phase = 'arcadeVS';
+  SFX.roundWin();
 }
 
 function startFight() {
@@ -539,6 +576,15 @@ const CPU_LEVELS = {
   hard:   { react:  6, jitter:  4, attackRoll: 0.78, dodgeChance: 0.93, dashChance: 0.35, superRoll: 0.16, kickRoll: 0.40, approachTick:  4 },
 };
 
+const ARCADE_OPPONENTS = [
+  { name: 'THE ROOKIE',   title: 'Fight 1 / 6', charIdx: 0, difficulty: 'easy'   },
+  { name: 'THE SWIFT',    title: 'Fight 2 / 6', charIdx: 2, difficulty: 'easy'   },
+  { name: 'THE BRAWLER',  title: 'Fight 3 / 6', charIdx: 1, difficulty: 'medium' },
+  { name: 'THE VETERAN',  title: 'Fight 4 / 6', charIdx: 3, difficulty: 'medium' },
+  { name: 'IRON FIST',    title: 'Fight 5 / 6', charIdx: 2, difficulty: 'hard'   },
+  { name: 'THE CHAMPION', title: 'Final Fight',  charIdx: 1, difficulty: 'hard'   },
+];
+
 let _cpuReactTimer = 0;
 
 function updateCPU() {
@@ -603,6 +649,13 @@ function updateCPU() {
 // ── Update ────────────────────────────────────────────────────────────────────
 function update() {
   if (phase==='menu' || phase==='charSelect' || phase==='stats' || phase==='achievements') return;
+
+  if (phase === 'arcadeVS') {
+    arcadeVSTimer--;
+    if (arcadeVSTimer <= 0) startFight();
+    return;
+  }
+  if (phase === 'arcadeOver' || phase === 'arcadeComplete') return;
 
   if (phase === 'countdown') {
     _hudPulse++;
@@ -1269,7 +1322,15 @@ function drawCharSelect() {
 
   const _cpuColors = { off:'#444', easy:'#44dd88', medium:'#ffaa00', hard:'#ff4444' };
 
-  if (cpuDifficulty !== 'off') {
+  if (cpuDifficulty !== 'off' && isArcade) {
+    // ── Arcade: show opponent info instead of difficulty buttons ──
+    const opp = ARCADE_OPPONENTS[arcadeIdx];
+    const diffColor = { easy: '#44dd88', medium: '#ffe44d', hard: '#ff5555' }[opp.difficulty];
+    ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = '#555';
+    ctx.fillText('ARCADE  •  ' + opp.title.toUpperCase() + '  •  VS  ' + opp.name, W/2, H - 62);
+    ctx.font = '10px sans-serif'; ctx.fillStyle = diffColor;
+    ctx.fillText(opp.difficulty.toUpperCase() + '  difficulty', W/2, H - 48);
+  } else if (cpuDifficulty !== 'off') {
     // ── Prominent 3-button difficulty row (VS AI mode) ──
     const diffLevels = ['easy', 'medium', 'hard'];
     const diffLabels = ['🟢 EASY', '🟡 MEDIUM', '🔴 HARD'];
@@ -1350,16 +1411,20 @@ function drawMenu() {
   });
   ctx.font='13px sans-serif';ctx.fillStyle='#666';
   opts.forEach((r,i)=>{ const bx=W/2-130+i*110; ctx.fillText(r===1?'Quick':'Best of '+r,bx+45,275); });
-  ctx.fillStyle='#ffe44d';ctx.beginPath();ctx.roundRect(W/2-100,310,200,55,12);ctx.fill();
-  ctx.fillStyle='#111';ctx.font='bold 22px sans-serif';ctx.textAlign='center';
-  ctx.fillText('START FIGHT',W/2,344);
-  ctx.fillStyle='rgba(68,180,255,0.15)';ctx.beginPath();ctx.roundRect(W/2-100,375,200,42,12);ctx.fill();
-  ctx.strokeStyle='#44aaff';ctx.lineWidth=1.5;ctx.beginPath();ctx.roundRect(W/2-100,375,200,42,12);ctx.stroke();
-  ctx.fillStyle='#44aaff';ctx.font='bold 16px sans-serif';ctx.textAlign='center';
+  ctx.fillStyle='#ffe44d';ctx.beginPath();ctx.roundRect(W/2-100,290,200,40,12);ctx.fill();
+  ctx.fillStyle='#111';ctx.font='bold 20px sans-serif';ctx.textAlign='center';
+  ctx.fillText('START FIGHT',W/2,316);
+  ctx.fillStyle='rgba(255,160,40,0.18)';ctx.beginPath();ctx.roundRect(W/2-100,338,200,34,12);ctx.fill();
+  ctx.strokeStyle='#ff9922';ctx.lineWidth=1.5;ctx.beginPath();ctx.roundRect(W/2-100,338,200,34,12);ctx.stroke();
+  ctx.fillStyle='#ff9922';ctx.font='bold 15px sans-serif';ctx.textAlign='center';
+  ctx.fillText('🏆 Arcade Mode',W/2,361);
+  ctx.fillStyle='rgba(68,180,255,0.15)';ctx.beginPath();ctx.roundRect(W/2-100,380,200,32,12);ctx.fill();
+  ctx.strokeStyle='#44aaff';ctx.lineWidth=1.5;ctx.beginPath();ctx.roundRect(W/2-100,380,200,32,12);ctx.stroke();
+  ctx.fillStyle='#44aaff';ctx.font='bold 14px sans-serif';ctx.textAlign='center';
   ctx.fillText('🤖 Practice vs AI',W/2,402);
   // Win streak
   if (bestStreak > 0) {
-    const streakY = 430;
+    const streakY = 422;
     ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
     ctx.fillStyle = winStreak > 0 ? '#ffe44d' : '#555';
     ctx.fillText(`🔥 Streak: ${winStreak}`, W/2 - 80, streakY);
@@ -1368,7 +1433,7 @@ function drawMenu() {
   }
 
   // STATS button
-  const sbx = W/2-52, sby = 455, sbw = 104, sbh = 26;
+  const sbx = W/2-52, sby = 434, sbw = 104, sbh = 24;
   const played = statWins + statLosses + statDraws;
   ctx.fillStyle = 'rgba(40,40,50,0.85)';
   ctx.beginPath(); ctx.roundRect(sbx, sby, sbw, sbh, 7); ctx.fill();
@@ -1376,7 +1441,7 @@ function drawMenu() {
   ctx.beginPath(); ctx.roundRect(sbx, sby, sbw, sbh, 7); ctx.stroke();
   ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
   ctx.fillStyle = '#888';
-  ctx.fillText(played > 0 ? `📊 STATS  (${played} played)` : '📊 STATS', W/2, sby + 19);
+  ctx.fillText(played > 0 ? `📊 STATS  (${played} played)` : '📊 STATS', W/2, sby + 17);
 
   ctx.restore();
 }
@@ -1621,9 +1686,13 @@ function drawGameOver() {
 
   ctx.textAlign = 'center';
 
-  // Score label
+  // Score label / arcade progress
   ctx.font = '13px sans-serif'; ctx.fillStyle = '#555';
-  ctx.fillText(`${roundsWon[0]}  —  ${roundsWon[1]}`, CX, top + 26);
+  if (isArcade) {
+    ctx.fillText(`ARCADE  •  ${ARCADE_OPPONENTS[arcadeIdx].title.toUpperCase()}`, CX, top + 26);
+  } else {
+    ctx.fillText(`${roundsWon[0]}  —  ${roundsWon[1]}`, CX, top + 26);
+  }
 
   // Champion title
   ctx.font = 'bold 24px sans-serif';
@@ -1737,15 +1806,130 @@ function drawGameOver() {
     }
 
     // Prompt
-    ctx.font = '13px sans-serif'; ctx.fillStyle = '#666'; ctx.textAlign = 'center';
-    if (!window.netIsOnline?.())
-      ctx.fillText('Press  SPACE  or tap to play again', CX, ry);
+    ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
+    if (!window.netIsOnline?.()) {
+      const needed = Math.ceil(totalRounds / 2);
+      const p1Won = roundsWon[0] >= needed;
+      if (isArcade && p1Won) {
+        const nextOpp = ARCADE_OPPONENTS[arcadeIdx + 1];
+        ctx.fillStyle = '#44dd88';
+        ctx.fillText(nextOpp ? 'SPACE  →  Next:  ' + nextOpp.name : 'SPACE  →  Claim your trophy!', CX, ry);
+      } else if (isArcade && !p1Won) {
+        ctx.fillStyle = '#ff8844';
+        ctx.fillText('SPACE  →  Return to menu', CX, ry);
+      } else {
+        ctx.fillStyle = '#666';
+        ctx.fillText('Press  SPACE  or tap to play again', CX, ry);
+      }
+    }
   } else {
     // Fallback if roundStats not available
     ctx.font = '14px sans-serif'; ctx.fillStyle = '#666'; ctx.textAlign = 'center';
     ctx.fillText('Press  SPACE  or tap to play again', CX, top + CH - 28);
   }
 
+  ctx.restore();
+}
+
+function drawArcadeVS() {
+  const opp = ARCADE_OPPONENTS[arcadeIdx];
+  const p1Char = CHARACTERS[p1CharIdx];
+  const p2Char = CHARACTERS[opp.charIdx];
+  const secs = Math.max(1, Math.ceil(arcadeVSTimer / 60));
+
+  ctx.fillStyle = '#08020c';
+  ctx.fillRect(0, 0, W, H);
+
+  const lg = ctx.createRadialGradient(W*0.24, H/2, 0, W*0.24, H/2, 280);
+  lg.addColorStop(0, p1Char.color + '38'); lg.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = lg; ctx.fillRect(0, 0, W, H);
+  const rg = ctx.createRadialGradient(W*0.76, H/2, 0, W*0.76, H/2, 280);
+  rg.addColorStop(0, p2Char.color + '38'); rg.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  ctx.textAlign = 'center';
+  const diffColor = { easy: '#44dd88', medium: '#ffe44d', hard: '#ff5555' }[opp.difficulty];
+  ctx.font = 'bold 11px sans-serif'; ctx.fillStyle = '#444';
+  ctx.fillText('ARCADE  MODE', W/2, 26);
+  ctx.font = 'bold 15px sans-serif'; ctx.fillStyle = diffColor;
+  ctx.fillText(opp.title.toUpperCase(), W/2, 48);
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, 56); ctx.lineTo(W, 56); ctx.stroke();
+
+  // P1 side
+  ctx.textAlign = 'left';
+  ctx.font = 'bold 20px sans-serif'; ctx.fillStyle = p1Char.color;
+  ctx.fillText(window.playerNames.p1 || 'P1', 44, 96);
+  ctx.font = '11px sans-serif'; ctx.fillStyle = '#555';
+  ctx.fillText(p1Char.name + '  •  ' + p1Char.cls, 44, 112);
+  _drawCharPreview(W * 0.22, H/2 + 32, p1Char);
+
+  // VS
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 64px sans-serif';
+  ctx.strokeStyle = '#000'; ctx.lineWidth = 8;
+  ctx.strokeText('VS', W/2, H/2 + 22);
+  ctx.fillStyle = '#ffe44d';
+  ctx.fillText('VS', W/2, H/2 + 22);
+
+  // Opponent side
+  ctx.textAlign = 'right';
+  ctx.font = 'bold 20px sans-serif'; ctx.fillStyle = p2Char.color;
+  ctx.fillText(opp.name, W - 44, 96);
+  ctx.font = '11px sans-serif'; ctx.fillStyle = '#555';
+  ctx.fillText(opp.difficulty.toUpperCase() + '  •  ' + p2Char.name + '  •  ' + p2Char.cls, W - 44, 112);
+
+  // Mirror P2 character (faces left toward P1)
+  ctx.save();
+  ctx.translate(W * 0.76 * 2, 0);
+  ctx.scale(-1, 1);
+  _drawCharPreview(W * 0.76, H/2 + 32, p2Char);
+  ctx.restore();
+
+  // Countdown prompt
+  ctx.textAlign = 'center';
+  ctx.font = '13px sans-serif'; ctx.fillStyle = '#3a3a3a';
+  ctx.fillText('Starting in  ' + secs + '...', W/2, H - 18);
+
+  ctx.restore();
+}
+
+function drawArcadeOver() {
+  ctx.fillStyle = 'rgba(0,0,0,0.93)'; ctx.fillRect(0, 0, W, H);
+  const opp = ARCADE_OPPONENTS[Math.min(arcadeIdx, ARCADE_OPPONENTS.length - 1)];
+  ctx.save(); ctx.textAlign = 'center';
+  ctx.font = 'bold 56px sans-serif';
+  ctx.strokeStyle = '#000'; ctx.lineWidth = 8;
+  ctx.strokeText('GAME  OVER', W/2, H/2 - 44);
+  ctx.fillStyle = '#ff4444';
+  ctx.fillText('GAME  OVER', W/2, H/2 - 44);
+  ctx.font = '18px sans-serif'; ctx.fillStyle = '#888';
+  ctx.fillText('Defeated by  ' + opp.name, W/2, H/2 + 2);
+  ctx.font = '13px sans-serif'; ctx.fillStyle = '#555';
+  ctx.fillText('Reached fight ' + (arcadeIdx + 1) + ' of ' + ARCADE_OPPONENTS.length, W/2, H/2 + 26);
+  ctx.font = '13px sans-serif'; ctx.fillStyle = '#3a3a3a';
+  ctx.fillText('Press  SPACE  or tap to return', W/2, H - 28);
+  ctx.restore();
+}
+
+function drawArcadeComplete() {
+  ctx.fillStyle = '#050301'; ctx.fillRect(0, 0, W, H);
+  const g = ctx.createRadialGradient(W/2, H/2 - 20, 10, W/2, H/2 - 20, 300);
+  g.addColorStop(0, 'rgba(255,200,0,0.22)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.save(); ctx.textAlign = 'center';
+  ctx.font = '72px sans-serif';
+  ctx.fillText('🏆', W/2, H/2 - 52);
+  ctx.font = 'bold 38px sans-serif';
+  ctx.strokeStyle = '#000'; ctx.lineWidth = 7;
+  ctx.strokeText('ARCADE  CHAMPION!', W/2, H/2 + 10);
+  ctx.fillStyle = '#ffe44d';
+  ctx.fillText('ARCADE  CHAMPION!', W/2, H/2 + 10);
+  ctx.font = '15px sans-serif'; ctx.fillStyle = '#888';
+  ctx.fillText('You defeated all ' + ARCADE_OPPONENTS.length + ' opponents!', W/2, H/2 + 40);
+  ctx.font = '13px sans-serif'; ctx.fillStyle = '#3a3a3a';
+  ctx.fillText('Press  SPACE  or tap to return', W/2, H - 28);
   ctx.restore();
 }
 
@@ -1782,6 +1966,9 @@ function draw() {
   if(phase==='stats'){drawStats();drawAchToast();return;}
   if(phase==='achievements'){drawAchievements();drawAchToast();return;}
   if(phase==='charSelect'){drawCharSelect();return;}
+  if(phase==='arcadeVS'){drawArcadeVS();return;}
+  if(phase==='arcadeOver'){drawArcadeOver();return;}
+  if(phase==='arcadeComplete'){drawArcadeComplete();return;}
 
   if(phase==='countdown'){
     drawCrowd();drawRing();
@@ -1860,8 +2047,8 @@ canvas.addEventListener('click', e => {
         } else if(cpuDifficulty === 'off'){
           if(p2CharIdx===i&&!p2Confirmed){ p2Confirmed=true; SFX.bell(); _checkBothConfirmed(); }
           else if(!p2Confirmed){ p2CharIdx=i; SFX.click(); }
-        } else {
-          // VS AI: right-side clicks navigate the CPU's character
+        } else if (!isArcade) {
+          // VS AI (non-arcade): right-side clicks navigate the CPU's character
           if(!p1Confirmed){ p2CharIdx=i; SFX.click(); }
         }
         break;
@@ -1871,25 +2058,31 @@ canvas.addEventListener('click', e => {
   }
   if(phase==='stats'){ phase='menu'; return; }
   if(phase==='achievements'){ phase='menu'; return; }
+  if(phase==='arcadeOver'||phase==='arcadeComplete'){ isArcade=false; phase='menu'; window.BGM?.setPhase('menu'); return; }
   if (!window.netHooks.canMenuInput()) return;
   if(phase==='menu'){
     [1,3,5].forEach((r,i)=>{
       const bx=W/2-130+i*110,by=205,bw=90,bh=50;
       if(sx>=bx&&sx<=bx+bw&&sy>=by&&sy<=by+bh){ menuSelected=r; SFX.click(); }
     });
-    if(sx>=W/2-100&&sx<=W/2+100&&sy>=310&&sy<=365){ SFX.click(); totalRounds=menuSelected; startGame(); return; }
-    if(sx>=W/2-100&&sx<=W/2+100&&sy>=375&&sy<=417){ SFX.click(); totalRounds=menuSelected; startVsAI('medium'); return; }
+    if(sx>=W/2-100&&sx<=W/2+100&&sy>=290&&sy<=330){ SFX.click(); totalRounds=menuSelected; startGame(); return; }
+    if(sx>=W/2-100&&sx<=W/2+100&&sy>=338&&sy<=372){ SFX.click(); startArcade(); return; }
+    if(sx>=W/2-100&&sx<=W/2+100&&sy>=380&&sy<=412){ SFX.click(); totalRounds=menuSelected; startVsAI('medium'); return; }
     // STATS button
-    if(sx>=W/2-52&&sx<=W/2+52&&sy>=455&&sy<=481){ SFX.click(); phase='stats'; return; }
+    if(sx>=W/2-52&&sx<=W/2+52&&sy>=434&&sy<=458){ SFX.click(); phase='stats'; return; }
     return;
   }
   if(phase==='roundEnd'||phase==='gameOver'){
     const needed=Math.ceil(totalRounds/2);
     const matchOver=roundsWon[0]>=needed||roundsWon[1]>=needed||currentRound>=totalRounds;
     if(matchOver||phase==='gameOver'){
+      if(isArcade){
+        if(roundsWon[0]>=needed){ arcadeIdx++; if(arcadeIdx>=ARCADE_OPPONENTS.length){isArcade=false;phase='arcadeComplete';SFX.victory();}else{_nextArcadeFight();} }
+        else{phase='arcadeOver';}
+        return;
+      }
       // Check if Rematch button was clicked (online only)
       if(window.netIsOnline?.()) {
-        // Rematch button: CX-70, ry (dynamically positioned — approximate check)
         const CX=W/2, CH=432, top=H/2-CH/2-10;
         const rbApproxY = top + 370;
         if(sx>=CX-70&&sx<=CX+70&&sy>=rbApproxY-5&&sy<=rbApproxY+38){
@@ -1920,7 +2113,13 @@ function _cpuCycle() {
 
 function _checkBothConfirmed() {
   if (cpuDifficulty !== 'off') p2Confirmed = true;
-  if (p1Confirmed && p2Confirmed) setTimeout(startFight, 420);
+  if (p1Confirmed && p2Confirmed) {
+    if (isArcade) {
+      setTimeout(() => { arcadeVSTimer = 180; phase = 'arcadeVS'; SFX.roundWin(); }, 420);
+    } else {
+      setTimeout(startFight, 420);
+    }
+  }
 }
 
 document.addEventListener('keydown', e=>{
@@ -1928,6 +2127,7 @@ document.addEventListener('keydown', e=>{
   if(e.key==='F11'){ e.preventDefault(); _toggleFullscreen(); return; }
   if(e.key==='Escape'){
     if(phase==='stats'||phase==='achievements'){ phase='menu'; return; }
+    if(phase==='arcadeOver'||phase==='arcadeComplete'){ isArcade=false; phase='menu'; window.BGM?.setPhase('menu'); return; }
   }
   if(e.key==='Tab'){
     e.preventDefault();
@@ -1949,20 +2149,28 @@ document.addEventListener('keydown', e=>{
       if(e.key==='ArrowLeft') { e.preventDefault(); if(!p2Confirmed){p2CharIdx=(p2CharIdx+N-1)%N;SFX.click();} return; }
       if(e.key==='ArrowRight'){ e.preventDefault(); if(!p2Confirmed){p2CharIdx=(p2CharIdx+1)%N;SFX.click();} return; }
       if(e.key==='l'||e.key==='L'){ if(!p2Confirmed){p2Confirmed=true;SFX.bell();_checkBothConfirmed();} return; }
-    } else {
-      // VS AI: ←/→ pick the CPU's character
+    } else if (!isArcade) {
+      // VS AI (non-arcade): ←/→ pick the CPU's character
       if(e.key==='ArrowLeft') { e.preventDefault(); if(!p1Confirmed){p2CharIdx=(p2CharIdx+N-1)%N;SFX.click();} return; }
       if(e.key==='ArrowRight'){ e.preventDefault(); if(!p1Confirmed){p2CharIdx=(p2CharIdx+1)%N;SFX.click();} return; }
     }
     return;
   }
   if(e.key===' '){
+    if(phase==='arcadeOver'||phase==='arcadeComplete'){ isArcade=false; phase='menu'; window.BGM?.setPhase('menu'); return; }
     if (!window.netHooks.canMenuInput()) return;
     if(phase==='menu'){ totalRounds=menuSelected; startGame(); return; }
     if(phase==='roundEnd'||phase==='gameOver'){
       const needed=Math.ceil(totalRounds/2);
       const matchOver=roundsWon[0]>=needed||roundsWon[1]>=needed||currentRound>=totalRounds;
-      if(matchOver||phase==='gameOver'){ phase='menu'; window.netHooks.onReturnMenu(); }
+      if(matchOver||phase==='gameOver'){
+        if(isArcade){
+          if(roundsWon[0]>=needed){ arcadeIdx++; if(arcadeIdx>=ARCADE_OPPONENTS.length){isArcade=false;phase='arcadeComplete';SFX.victory();}else{_nextArcadeFight();} }
+          else{phase='arcadeOver';}
+          return;
+        }
+        phase='menu'; window.netHooks.onReturnMenu();
+      }
       else startNextRound();
     }
   }
