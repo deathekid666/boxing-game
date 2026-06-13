@@ -86,6 +86,12 @@ const SUPER_HIT_R  = 60;      // world-px hit radius for super
 const JUMP_VZ      = -12;
 const GRAVITY      = 0.7;
 const JUMP_CD      = 30;
+const KD_THRESHOLD = 70;   // HP at or below this triggers knockdown on a damaging hit
+const KD_FALL      = 24;   // frames to fall to ground
+const KD_DOWN      = 120;  // frames lying down (~2 s at 60 fps, referee counts to 8)
+const KD_RISE      = 24;   // frames to stand back up
+const KD_TOTAL     = KD_FALL + KD_DOWN + KD_RISE;
+const KD_INVUL     = 90;   // invulnerability frames after rising
 
 function depthToScreenY(depth) { return RING_BACK_Y + depth * (RING_FRONT_Y - RING_BACK_Y); }
 function depthToScale(depth)   { return RING_BACK_S + depth * (RING_FRONT_S - RING_BACK_S); }
@@ -113,6 +119,7 @@ function mkFighter(x, color, dir) {
   return {
     x, y: 315, color, dir, depth: 0.5, jz: 0, jvz: 0, jumpCd: 0,
     hp: MAX_HP, hpDisplay: MAX_HP, hpFlash: 0,
+    knockdown: false, knockdownT: 0, knockdownInvul: 0,
     shield: MAX_SHIELD,
     shieldTimer: 0, vx: 0,
     punching: false, punchT: 0, punchCd: 0,
@@ -174,7 +181,14 @@ function applyHit(attacker, defender, dmg, type, isTip) {
     d -= absorb;
   }
   defender.hp    = Math.max(0, defender.hp - d);
-  if (d > 0) defender.hpFlash = 10;
+  if (d > 0) {
+    defender.hpFlash = 10;
+    if (defender.hp > 0 && defender.hp <= KD_THRESHOLD && !defender.knockdown && defender.knockdownInvul <= 0) {
+      defender.knockdown = true; defender.knockdownT = 0;
+      defender.punching = false; defender.kicking = false; defender.supering = false; defender.dashT = 0;
+      floaties.push({ x: defender.x, y: fighterScreenY(defender)-110, vx:0, vy:-1.5, t:0, col:'#ffe44d', size:32, txt:'DOWN!' });
+    }
+  }
   defender.wobble = type==='super' ? 35 : 20;
   defender.hit    = type==='super' ? 18 : 12;
   defender.vx     = attacker.dir * (type==='super' ? 8 : 4);
@@ -201,6 +215,7 @@ function tipDamage(fistLen, maxReach, baseDmg, tipDmg) {
 }
 
 function checkPunch(a, d) {
+  if (d.knockdown || d.knockdownInvul > 0) return;
   if (!a.punching) return;
   const t = Math.sin(a.punchT * Math.PI);
   if (t < 0.45) return;
@@ -218,6 +233,7 @@ function checkPunch(a, d) {
   }
 }
 function checkKick(a, d) {
+  if (d.knockdown || d.knockdownInvul > 0) return;
   if (!a.kicking) return;
   const t = Math.sin(a.kickT * Math.PI);
   if (t < 0.4) return;
@@ -235,6 +251,7 @@ function checkKick(a, d) {
   }
 }
 function checkSuper(a, d) {
+  if (d.knockdown || d.knockdownInvul > 0) return;
   if (!a.supering) return;
   const t = Math.sin(a.superT * Math.PI);
   if (t < 0.35) return;
@@ -272,7 +289,9 @@ function update() {
   if (shakeT > 0) shakeT--;
 
   const spd = 3.5;
-  const canAct = p => !p.punching && !p.kicking && !p.supering;
+  const canAct = p => !p.punching && !p.kicking && !p.supering && !p.knockdown;
+  if (p1.knockdown) { p1.vx = 0; p1.dashT = 0; inputState.p1.dash = 0; }
+  if (p2.knockdown) { p2.vx = 0; p2.dashT = 0; inputState.p2.dash = 0; }
 
   // dash trigger — consume the one-shot dash signal from inputState
   if (inputState.p1.dash !== 0 && p1.dashCd<=0 && p1.dashT<=0 && canAct(p1)) {
@@ -295,11 +314,11 @@ function update() {
   p2.x = Math.max(70, Math.min(W-70, p2.x+p2.vx));
 
   // Depth movement — W/ArrowUp moves toward back of ring
-  if (!p1.punching && !p1.kicking && !p1.supering && p1.dashT<=0) {
+  if (!p1.punching && !p1.kicking && !p1.supering && p1.dashT<=0 && !p1.knockdown) {
     if (inputState.p1.up) p1.depth = Math.max(0, p1.depth - DEPTH_SPEED);
     else p1.depth = Math.min(1, p1.depth + DEPTH_SPEED * 0.5);
   }
-  if (!p2.punching && !p2.kicking && !p2.supering && p2.dashT<=0) {
+  if (!p2.punching && !p2.kicking && !p2.supering && p2.dashT<=0 && !p2.knockdown) {
     if (inputState.p2.up) p2.depth = Math.max(0, p2.depth - DEPTH_SPEED);
     else p2.depth = Math.min(1, p2.depth + DEPTH_SPEED * 0.5);
   }
@@ -340,7 +359,7 @@ function update() {
   p2.dir = p1.x<p2.x ? -1 :  1;
 
   // ducking
-  const canDuck = p => !p.punching && !p.kicking && !p.supering && p.dashT<=0;
+  const canDuck = p => !p.punching && !p.kicking && !p.supering && p.dashT<=0 && !p.knockdown;
   p1.ducking = inputState.p1.duck ? canDuck(p1) : false;
   p2.ducking = inputState.p2.duck ? canDuck(p2) : false;
 
@@ -370,6 +389,14 @@ function update() {
     if (p.hit>0)       p.hit--;
     if (p.hpFlash>0)   p.hpFlash--;
     else if (p.hpDisplay > p.hp) p.hpDisplay = Math.max(p.hp, p.hpDisplay - 1.2);
+    if (p.knockdownInvul > 0) p.knockdownInvul--;
+    if (p.knockdown) {
+      if (p.knockdownT === KD_FALL) SFX.stagger();
+      const inDown = p.knockdownT >= KD_FALL && p.knockdownT < KD_FALL + KD_DOWN;
+      if (inDown && (p.knockdownT - KD_FALL) % 15 === 0) SFX.click();
+      p.knockdownT++;
+      if (p.knockdownT >= KD_TOTAL) { p.knockdown=false; p.knockdownT=0; p.knockdownInvul=KD_INVUL; }
+    }
     if (p.shieldTimer>0) p.shieldTimer--;
     else if (p.shield<MAX_SHIELD) p.shield=Math.min(MAX_SHIELD, p.shield+SHIELD_REGEN_RATE);
   }
@@ -444,9 +471,18 @@ function drawFighter(p) {
   const wobX = Math.sin(p.wobble*0.5)*10;
   const hitFlash = p.hit>0 && Math.floor(p.hit)%2===0;
   ctx.save();
+  if (p.knockdownInvul > 0 && Math.floor(p.knockdownInvul / 5) % 2 === 0) ctx.globalAlpha = 0.35;
   ctx.translate(p.x+wobX, sy);
   ctx.scale(s, s);
-  if (p.ducking) { ctx.translate(0,18); ctx.scale(1,0.72); }
+  if (p.knockdown) {
+    const t = p.knockdownT;
+    const angle = t < KD_FALL
+      ? (t / KD_FALL) * (Math.PI / 2)
+      : t < KD_FALL + KD_DOWN
+        ? Math.PI / 2
+        : (1 - (t - KD_FALL - KD_DOWN) / KD_RISE) * (Math.PI / 2);
+    ctx.translate(0, 52); ctx.rotate(-p.dir * angle); ctx.translate(0, -52);
+  } else if (p.ducking) { ctx.translate(0,18); ctx.scale(1,0.72); }
   const col  = hitFlash ? '#fff' : (p.superFlash>0 ? '#ffff44' : p.color);
   const dark = p.color==='#4488ff' ? '#1144aa' : '#aa1111';
 
@@ -611,6 +647,27 @@ function drawHUD() {
   ctx.textAlign='left';
 }
 
+function drawKnockdownCount() {
+  for (const p of [p1, p2]) {
+    if (!p.knockdown) continue;
+    const t = p.knockdownT;
+    if (t < KD_FALL || t >= KD_FALL + KD_DOWN) continue;
+    const countFrame = t - KD_FALL;
+    const count = Math.min(8, Math.floor(countFrame / 15) + 1);
+    const sx = p.x;
+    const sy = fighterScreenY(p) - 96 * depthToScale(p.depth);
+    const pulse = 1 + Math.sin(countFrame * 0.35) * 0.08;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = `bold ${Math.round(52 * pulse)}px sans-serif`;
+    ctx.strokeStyle = '#000'; ctx.lineWidth = 7;
+    ctx.strokeText(String(count), sx, sy);
+    ctx.fillStyle = '#ffe44d';
+    ctx.fillText(String(count), sx, sy);
+    ctx.restore();
+  }
+}
+
 function drawFloaties(){
   for(const f of floaties){
     ctx.save();ctx.globalAlpha=Math.max(0,1-f.t/55);
@@ -709,6 +766,7 @@ function draw() {
   drawCrowd();drawRing();
   const sorted = [p1, p2].sort((a, b) => a.depth - b.depth);
   drawFighter(sorted[0]); drawFighter(sorted[1]);
+  drawKnockdownCount();
   drawFloaties();
   ctx.restore();
 
