@@ -121,7 +121,7 @@ let roundEndTimer = 0;
 let roundStats = null;
 let p1CharIdx = 0, p2CharIdx = 1;
 let p1Confirmed = false, p2Confirmed = false;
-let cpuMode = false;
+let cpuDifficulty = 'off'; // 'off' | 'easy' | 'medium' | 'hard'
 let _cpuTimer = 0, _cpuHoldLeft = false, _cpuHoldRight = false, _cpuHoldDuck = false;
 let roundFrame = 0;
 let hitStop = 0;
@@ -162,7 +162,7 @@ function startGame() {
   roundStats = null;
   p1Confirmed = false;
   p2Confirmed = false;
-  cpuMode = false;
+  cpuDifficulty = 'off';
   phase = 'charSelect';
   window.BGM?.setPhase('menu');
   window.netHooks.onStartGame();
@@ -301,20 +301,21 @@ function checkSuper(a, d) {
 }
 
 // ── CPU AI ────────────────────────────────────────────────────────────────────
-// Writes to inputState.p2 each frame when cpuMode is true.
-// Clears all p2 input first, then decides what to do based on game state.
-const CPU_REACT_DELAY = 18; // frames of reaction lag
+const CPU_LEVELS = {
+  easy:   { react: 38, jitter: 20, attackRoll: 0.28, dodgeChance: 0.25, dashChance: 0.04, superRoll: 0.03, kickRoll: 0.10, approachTick: 14 },
+  medium: { react: 18, jitter: 10, attackRoll: 0.55, dodgeChance: 0.70, dashChance: 0.15, superRoll: 0.08, kickRoll: 0.22, approachTick:  8 },
+  hard:   { react:  6, jitter:  4, attackRoll: 0.78, dodgeChance: 0.93, dashChance: 0.35, superRoll: 0.16, kickRoll: 0.40, approachTick:  4 },
+};
+
 let _cpuReactTimer = 0;
-let _cpuAction = null; // { move, attack, duck, dash }
 
 function updateCPU() {
-  if (!cpuMode || phase !== 'fight' || !p1 || !p2) return;
+  if (cpuDifficulty === 'off' || phase !== 'fight' || !p1 || !p2) return;
+  const cfg = CPU_LEVELS[cpuDifficulty];
 
-  // Clear sustained inputs each frame
   inputState.p2.left  = _cpuHoldLeft;
   inputState.p2.right = _cpuHoldRight;
   inputState.p2.duck  = _cpuHoldDuck;
-  // One-shot inputs reset every frame
   inputState.p2.punch = false;
   inputState.p2.kick  = false;
   inputState.p2.super = false;
@@ -323,55 +324,47 @@ function updateCPU() {
   if (p2.knockdown) { _cpuHoldLeft=false; _cpuHoldRight=false; _cpuHoldDuck=false; return; }
 
   _cpuReactTimer--;
-  if (_cpuReactTimer > 0) return; // still in reaction delay
+  if (_cpuReactTimer > 0) return;
 
-  const dx = p1.x - p2.x;   // positive → P1 is to our right
+  const dx = p1.x - p2.x;
   const absDx = Math.abs(dx);
   const inPunchRange = absDx < PUNCH_REACH - 10;
-  const inKickRange  = absDx < KICK_REACH;
   const inSuperRange = absDx < SUPER_REACH + 20;
-
-  // Decide next action with some randomness to be beatable
   const roll = Math.random();
 
-  if (p1.supering && inSuperRange && roll < 0.70) {
-    // Dodge by ducking or jumping away
-    if (roll < 0.40) {
+  if (p1.supering && inSuperRange && roll < cfg.dodgeChance) {
+    if (roll < cfg.dodgeChance * 0.5) {
       _cpuHoldDuck = true;
       _cpuHoldLeft = false; _cpuHoldRight = false;
     } else {
       inputState.p2.jump = true;
-      _cpuHoldLeft = dx > 0; _cpuHoldRight = dx < 0; // move away
+      _cpuHoldLeft = dx > 0; _cpuHoldRight = dx < 0;
       _cpuHoldDuck = false;
     }
-    _cpuReactTimer = CPU_REACT_DELAY;
-  } else if (inPunchRange && roll < 0.55) {
-    // Attack: mix punch / kick / super
+    _cpuReactTimer = cfg.react;
+  } else if (inPunchRange && roll < cfg.attackRoll) {
     _cpuHoldLeft=false; _cpuHoldRight=false; _cpuHoldDuck=false;
-    if (p2.superCd <= 0 && roll < 0.08) {
+    if (p2.superCd <= 0 && roll < cfg.superRoll) {
       inputState.p2.super = true;
-    } else if (p2.kickCd <= 0 && roll < 0.22) {
+    } else if (p2.kickCd <= 0 && roll < cfg.kickRoll) {
       inputState.p2.kick = true;
     } else {
       inputState.p2.punch = true;
     }
-    _cpuReactTimer = CPU_REACT_DELAY + Math.floor(Math.random() * 10);
+    _cpuReactTimer = cfg.react + Math.floor(Math.random() * cfg.jitter);
   } else if (absDx > PUNCH_REACH + 60) {
-    // Approach: move toward P1
     _cpuHoldLeft  = dx < 0;
     _cpuHoldRight = dx > 0;
     _cpuHoldDuck  = false;
-    // Occasionally dash in
-    if (absDx > PUNCH_REACH + 130 && p2.dashCd <= 0 && roll < 0.15) {
+    if (absDx > PUNCH_REACH + 130 && p2.dashCd <= 0 && roll < cfg.dashChance) {
       inputState.p2.dash = dx < 0 ? -1 : 1;
     }
-    _cpuReactTimer = 8;
+    _cpuReactTimer = cfg.approachTick;
   } else {
-    // Neutral range: light pressure or sidestep
     _cpuHoldLeft=false; _cpuHoldRight=false; _cpuHoldDuck=false;
-    if (roll < 0.30) inputState.p2.punch = true;
-    else if (roll < 0.40 && p2.kickCd <= 0) inputState.p2.kick = true;
-    _cpuReactTimer = CPU_REACT_DELAY;
+    if (roll < cfg.attackRoll * 0.55) inputState.p2.punch = true;
+    else if (roll < cfg.attackRoll * 0.72 && p2.kickCd <= 0) inputState.p2.kick = true;
+    _cpuReactTimer = cfg.react;
   }
 }
 
@@ -988,14 +981,17 @@ function drawCharSelect() {
     }
   }
 
-  // CPU toggle pill button (always visible, bottom-right area)
-  const cpuBtnX = W - 110, cpuBtnY = H - 54, cpuBtnW = 96, cpuBtnH = 26;
-  ctx.fillStyle = cpuMode ? 'rgba(255,160,0,0.25)' : 'rgba(60,60,60,0.60)';
+  // CPU difficulty button (bottom-right) — press C to cycle OFF→EASY→MEDIUM→HARD→OFF
+  const _cpuColors = { off:'#444', easy:'#44dd88', medium:'#ffaa00', hard:'#ff4444' };
+  const _cpuBgAlpha = { off:'rgba(40,40,40,0.60)', easy:'rgba(0,80,40,0.30)', medium:'rgba(80,50,0,0.30)', hard:'rgba(80,10,10,0.30)' };
+  const _cpuLabels = { off:'🤖 CPU: OFF', easy:'🤖 EASY', medium:'🤖 MEDIUM', hard:'🤖 HARD' };
+  const cpuBtnX = W - 116, cpuBtnY = H - 54, cpuBtnW = 108, cpuBtnH = 26;
+  ctx.fillStyle = _cpuBgAlpha[cpuDifficulty];
   ctx.beginPath(); ctx.roundRect(cpuBtnX, cpuBtnY, cpuBtnW, cpuBtnH, 8); ctx.fill();
-  ctx.strokeStyle = cpuMode ? '#ffaa00' : '#444'; ctx.lineWidth = 1.5;
+  ctx.strokeStyle = _cpuColors[cpuDifficulty]; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.roundRect(cpuBtnX, cpuBtnY, cpuBtnW, cpuBtnH, 8); ctx.stroke();
-  ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = cpuMode ? '#ffaa00' : '#666';
-  ctx.fillText(cpuMode ? '🤖 CPU ON  [C]' : '🤖 CPU OFF [C]', cpuBtnX + cpuBtnW/2, cpuBtnY + 17);
+  ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = _cpuColors[cpuDifficulty];
+  ctx.fillText(_cpuLabels[cpuDifficulty] + '  [C]', cpuBtnX + cpuBtnW/2, cpuBtnY + 17);
 
   // Bottom status
   if (p1Confirmed && p2Confirmed) {
@@ -1009,9 +1005,9 @@ function drawCharSelect() {
     ctx.fillStyle = p1Confirmed ? '#4488ff' : '#555';
     ctx.fillText(p1Confirmed ? `✓ P1  ${CHARACTERS[p1CharIdx].name}` : 'P1: pick a fighter', 26, H - 22);
     ctx.textAlign = 'right';
-    if (cpuMode) {
-      ctx.fillStyle = '#ffaa00';
-      ctx.fillText(`CPU  ${CHARACTERS[p2CharIdx].name}  🤖`, W - 26, H - 22);
+    if (cpuDifficulty !== 'off') {
+      ctx.fillStyle = _cpuColors[cpuDifficulty];
+      ctx.fillText(`CPU(${cpuDifficulty.toUpperCase()})  ${CHARACTERS[p2CharIdx].name}  🤖`, W - 26, H - 22);
     } else {
       ctx.fillStyle = p2Confirmed ? '#ff4444' : '#555';
       ctx.fillText(p2Confirmed ? `P2  ${CHARACTERS[p2CharIdx].name}  ✓` : 'P2: pick a fighter', W - 26, H - 22);
@@ -1340,9 +1336,9 @@ canvas.addEventListener('click', e => {
   }
   if(phase==='charSelect'){
     // CPU toggle button
-    const cpuBtnX=W-110, cpuBtnY=H-54, cpuBtnW=96, cpuBtnH=26;
+    const cpuBtnX=W-116, cpuBtnY=H-54, cpuBtnW=108, cpuBtnH=26;
     if(sx>=cpuBtnX&&sx<=cpuBtnX+cpuBtnW&&sy>=cpuBtnY&&sy<=cpuBtnY+cpuBtnH){
-      if(!p1Confirmed&&!p2Confirmed){ cpuMode=!cpuMode; SFX.click(); if(cpuMode) p2Confirmed=false; }
+      if(!p1Confirmed&&!p2Confirmed){ _cpuCycle(); }
       return;
     }
     const CW=158,GAP=12,cardY=88,CH=285;
@@ -1354,7 +1350,7 @@ canvas.addEventListener('click', e => {
         if(sx < W/2){
           if(p1CharIdx===i&&!p1Confirmed){ p1Confirmed=true; SFX.bell(); _checkBothConfirmed(); }
           else if(!p1Confirmed){ p1CharIdx=i; SFX.click(); }
-        } else if(!cpuMode){
+        } else if(cpuDifficulty === 'off'){
           if(p2CharIdx===i&&!p2Confirmed){ p2Confirmed=true; SFX.bell(); _checkBothConfirmed(); }
           else if(!p2Confirmed){ p2CharIdx=i; SFX.click(); }
         }
@@ -1380,8 +1376,15 @@ canvas.addEventListener('click', e => {
   }
 });
 
+function _cpuCycle() {
+  const order = ['off', 'easy', 'medium', 'hard'];
+  cpuDifficulty = order[(order.indexOf(cpuDifficulty) + 1) % order.length];
+  p2Confirmed = false;
+  SFX.click();
+}
+
 function _checkBothConfirmed() {
-  if (cpuMode) p2Confirmed = true;
+  if (cpuDifficulty !== 'off') p2Confirmed = true;
   if (p1Confirmed && p2Confirmed) setTimeout(startFight, 420);
 }
 
@@ -1393,10 +1396,10 @@ document.addEventListener('keydown', e=>{
     if(e.key==='d'||e.key==='D'){ if(!p1Confirmed){p1CharIdx=(p1CharIdx+1)%N;SFX.click();} return; }
     if(e.key==='f'||e.key==='F'){ if(!p1Confirmed){p1Confirmed=true;SFX.bell();_checkBothConfirmed();} return; }
     if(e.key==='c'||e.key==='C'){
-      if(!p1Confirmed&&!p2Confirmed){ cpuMode=!cpuMode; SFX.click(); if(cpuMode) p2Confirmed=false; }
+      if(!p1Confirmed&&!p2Confirmed){ _cpuCycle(); }
       return;
     }
-    if(!cpuMode){
+    if(cpuDifficulty === 'off'){
       if(e.key==='ArrowLeft') { e.preventDefault(); if(!p2Confirmed){p2CharIdx=(p2CharIdx+N-1)%N;SFX.click();} return; }
       if(e.key==='ArrowRight'){ e.preventDefault(); if(!p2Confirmed){p2CharIdx=(p2CharIdx+1)%N;SFX.click();} return; }
       if(e.key==='l'||e.key==='L'){ if(!p2Confirmed){p2Confirmed=true;SFX.bell();_checkBothConfirmed();} return; }
