@@ -160,6 +160,154 @@ function _updateMatchStats(p1Won, isDraw) {
   statDmg  += _mDmg;
   if (_mCombo > statBestCombo) statBestCombo = _mCombo;
   _saveStats();
+
+  // Match-end achievement checks
+  const played = statWins + statLosses + statDraws;
+  if (p1Won && !isDraw) {
+    if (statWins === 1)  _unlockAch('first_win');
+    if (_mKOd)           _unlockAch('ko_artist');
+    if (_mSuperLanded)   _unlockAch('super_star');
+    if (_mP1KDs === 0)   _unlockAch('untouchable');
+    if (_mWasLowHP)      _unlockAch('comeback');
+    if (winStreak >= 3)  _unlockAch('hat_trick');
+    if (winStreak >= 5)  _unlockAch('destroyer');
+    if (statWins >= 10)  _unlockAch('champion');
+    if (statWins >= 50)  _unlockAch('legendary');
+    if (CHARACTERS.every(c => (statCharWins[c.name]||0) > 0)) _unlockAch('all_styles');
+  }
+  if (statDmg >= 5000)  _unlockAch('iron_fist');
+  if (played >= 20)     _unlockAch('veteran');
+}
+
+// ── Achievements ─────────────────────────────────────────────────────────────
+const ACHIEVEMENTS = [
+  { id:'first_win',   icon:'🥊', name:'First Win',      desc:'Win your first match' },
+  { id:'ko_artist',   icon:'💥', name:'KO Artist',      desc:'Win by knocking out P2' },
+  { id:'super_star',  icon:'⚡', name:'Super Star',     desc:'Land a super move hit' },
+  { id:'combo_king',  icon:'🔥', name:'Combo King',     desc:'Land a 5-hit combo' },
+  { id:'speed_demon', icon:'💨', name:'Speed Demon',    desc:'Win a round in 20 sec' },
+  { id:'untouchable', icon:'🛡', name:'Untouchable',    desc:'Win without knockdown' },
+  { id:'perfect',     icon:'✨', name:'Perfect Round',  desc:'Win a round at full HP' },
+  { id:'comeback',    icon:'❤️', name:'Comeback Kid',   desc:'Win from below 25% HP' },
+  { id:'hat_trick',   icon:'🎩', name:'Hat Trick',      desc:'Win 3 matches in a row' },
+  { id:'destroyer',   icon:'💀', name:'Destroyer',      desc:'Reach a 5-win streak' },
+  { id:'iron_fist',   icon:'👊', name:'Iron Fist',      desc:'Deal 5,000 total damage' },
+  { id:'veteran',     icon:'🎖', name:'Veteran',        desc:'Play 20 matches' },
+  { id:'champion',    icon:'🏆', name:'Champion',       desc:'Win 10 matches' },
+  { id:'all_styles',  icon:'🌟', name:'All Styles',     desc:'Win with all 4 fighters' },
+  { id:'legendary',   icon:'👑', name:'Legendary',      desc:'Win 50 matches' },
+];
+
+let unlockedAchs = new Set(JSON.parse(localStorage.getItem('fbg_ach') || '[]'));
+let _achToasts   = []; // [{ id, t }]  t counts down from 240
+
+// Extra per-match flags
+let _mP1KDs = 0, _mWasLowHP = false, _mKOd = false, _mSuperLanded = false;
+
+function _unlockAch(id) {
+  if (unlockedAchs.has(id)) return;
+  unlockedAchs.add(id);
+  localStorage.setItem('fbg_ach', JSON.stringify([...unlockedAchs]));
+  _achToasts.push({ id, t: 260 });
+  SFX.bell();
+}
+
+function drawAchToast() {
+  if (_achToasts.length === 0) return;
+  const toast = _achToasts[0];
+  toast.t--;
+  if (toast.t <= 0) { _achToasts.shift(); return; }
+  const ach = ACHIEVEMENTS.find(a => a.id === toast.id);
+  if (!ach) return;
+
+  const slideIn  = Math.min(1, (260 - toast.t) / 22);
+  const fadeOut  = toast.t < 50 ? toast.t / 50 : 1;
+  const alpha    = slideIn * fadeOut;
+  const TW = 300, TH = 52;
+  const ty = H - 68 - (1 - slideIn) * 55;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = 'rgba(16,18,30,0.97)';
+  ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 1.8;
+  ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 12;
+  ctx.beginPath(); ctx.roundRect(W/2 - TW/2, ty, TW, TH, 10); ctx.fill(); ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.font = '20px sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#fff';
+  ctx.fillText(ach.icon, W/2 - TW/2 + 12, ty + 33);
+  ctx.font = 'bold 11px sans-serif'; ctx.fillStyle = '#ffd700';
+  ctx.fillText('ACHIEVEMENT UNLOCKED', W/2 - TW/2 + 44, ty + 19);
+  ctx.font = 'bold 13px sans-serif'; ctx.fillStyle = '#fff';
+  ctx.fillText(ach.name, W/2 - TW/2 + 44, ty + 35);
+  ctx.restore();
+}
+
+function drawAchievements() {
+  ctx.fillStyle = 'rgba(0,0,0,0.92)'; ctx.fillRect(0, 0, W, H);
+  ctx.save();
+
+  const CX = W/2, CW = 760, CH = 430, top = H/2 - CH/2 - 8;
+  ctx.fillStyle = 'rgba(12,14,22,0.97)';
+  ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.roundRect(CX - CW/2, top, CW, CH, 14); ctx.fill(); ctx.stroke();
+
+  const total = ACHIEVEMENTS.length;
+  const done  = ACHIEVEMENTS.filter(a => unlockedAchs.has(a.id)).length;
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 22px sans-serif'; ctx.fillStyle = '#ffe44d';
+  ctx.fillText('ACHIEVEMENTS', CX, top + 34);
+  ctx.font = '11px sans-serif'; ctx.fillStyle = '#555';
+  ctx.fillText(`${done} / ${total} unlocked`, CX, top + 50);
+
+  // Progress bar
+  const pbx = CX - 160, pby = top + 56, pbw = 320, pbh = 6;
+  ctx.fillStyle = '#1a1a2a';
+  ctx.beginPath(); ctx.roundRect(pbx, pby, pbw, pbh, 3); ctx.fill();
+  if (done > 0) {
+    ctx.fillStyle = '#ffd700';
+    ctx.beginPath(); ctx.roundRect(pbx, pby, Math.round(pbw * done / total), pbh, 3); ctx.fill();
+  }
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(CX - CW/2 + 20, top + 70); ctx.lineTo(CX + CW/2 - 20, top + 70); ctx.stroke();
+
+  // 3-column grid
+  const cols = 3, cellW = (CW - 56) / cols, cellH = 56, rowStride = 64;
+  const gx = CX - CW/2 + 16, gy = top + 78;
+
+  for (let i = 0; i < ACHIEVEMENTS.length; i++) {
+    const ach = ACHIEVEMENTS[i];
+    const col = i % cols, row = Math.floor(i / cols);
+    const ax = gx + col * (cellW + 12), ay = gy + row * rowStride;
+    const unlk = unlockedAchs.has(ach.id);
+
+    ctx.fillStyle = unlk ? 'rgba(28,32,50,0.95)' : 'rgba(16,16,20,0.80)';
+    ctx.beginPath(); ctx.roundRect(ax, ay, cellW, cellH, 8); ctx.fill();
+    if (unlk) {
+      ctx.strokeStyle = 'rgba(255,215,0,0.25)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect(ax, ay, cellW, cellH, 8); ctx.stroke();
+    }
+
+    ctx.font = '20px sans-serif'; ctx.textAlign = 'center';
+    ctx.globalAlpha = unlk ? 1.0 : 0.18;
+    ctx.fillText(ach.icon, ax + 30, ay + cellH/2 + 8);
+    ctx.globalAlpha = 1;
+
+    ctx.textAlign = 'left';
+    ctx.font = `bold 12px sans-serif`; ctx.fillStyle = unlk ? '#ffe44d' : '#3a3a42';
+    ctx.fillText(ach.name, ax + 54, ay + 22);
+    ctx.font = '10px sans-serif'; ctx.fillStyle = unlk ? '#666' : '#282828';
+    ctx.fillText(ach.desc, ax + 54, ay + 36);
+
+    if (unlk) {
+      ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'right'; ctx.fillStyle = '#44dd88';
+      ctx.fillText('✓', ax + cellW - 10, ay + cellH/2 + 5);
+    }
+  }
+
+  ctx.font = '12px sans-serif'; ctx.fillStyle = '#444'; ctx.textAlign = 'center';
+  ctx.fillText('ESC or click to close  ·  TAB for stats', CX, top + CH - 14);
+  ctx.restore();
 }
 
 // ── Game state ───────────────────────────────────────────────────────────────
@@ -222,6 +370,7 @@ function startGame() {
 
 function startFight() {
   _mKOs = 0; _mDmg = 0; _mCombo = 0;
+  _mP1KDs = 0; _mWasLowHP = false; _mKOd = false; _mSuperLanded = false;
   spawnFighters();
   phase = 'fight';
   SFX.bell();
@@ -283,7 +432,7 @@ function applyHit(attacker, defender, dmg, type, isTip) {
   shakeMag = type==='super' ? 14 : (isTip ? 7 : 4);
   shakeT   = type==='super' ? 22 : 12;
 
-  if (type==='super') SFX.superHit();
+  if (type==='super') { SFX.superHit(); if (attacker === p1) _mSuperLanded = true; }
   else if (type==='kick') SFX.kick();
   else SFX.punch();
 
@@ -423,7 +572,7 @@ function updateCPU() {
 
 // ── Update ────────────────────────────────────────────────────────────────────
 function update() {
-  if (phase==='menu' || phase==='charSelect' || phase==='stats') return;
+  if (phase==='menu' || phase==='charSelect' || phase==='stats' || phase==='achievements') return;
 
   if (phase==='roundEnd') {
     if (roundEndTimer > 0) {
@@ -571,6 +720,10 @@ function update() {
   checkKick(p1,p2);  checkKick(p2,p1);
   checkSuper(p1,p2); checkSuper(p2,p1);
 
+  // Achievement real-time checks
+  if (p1.hp < p1.maxHp * 0.25) _mWasLowHP = true;
+  if (p1.combo >= 5) _unlockAch('combo_king');
+
   for (const f of floaties) { f.x+=f.vx; f.y+=f.vy; f.vy+=0.12; f.t++; }
   floaties = floaties.filter(f=>f.t<65);
 
@@ -606,6 +759,11 @@ function _endRound(msg, p1Win, p2Win) {
   _mKOs   += p2.knockdowns;
   _mDmg   += Math.round(p2.maxHp - p2.hp);
   _mCombo  = Math.max(_mCombo, p1.maxCombo);
+  _mP1KDs += p1.knockdowns;
+  if (p1Win > 0 && p2.hp <= 0) _mKOd = true;
+  // Round-level achievements
+  if (p1Win > 0 && roundFrame < 20 * 60) _unlockAch('speed_demon');
+  if (p1Win > 0 && p1.hp >= p1.maxHp)   _unlockAch('perfect');
   if (roundsWon[0]>=needed || roundsWon[1]>=needed || currentRound>=totalRounds) {
     roundEndTimer = 999;
     phase = 'roundEnd';
@@ -1222,7 +1380,7 @@ function drawStats() {
 
   // Close hint
   ctx.font = '12px sans-serif'; ctx.fillStyle = '#444'; ctx.textAlign = 'center';
-  ctx.fillText('Press  ESC  or click to close', CX, top + CH - 14);
+  ctx.fillText('ESC or click to close  ·  TAB for achievements', CX, top + CH - 14);
 
   ctx.restore();
 }
@@ -1493,8 +1651,9 @@ function draw() {
     ctx.fillStyle=sg;ctx.fillRect(0,0,W,H);
   }
 
-  if(phase==='menu'){drawMenu();return;}
-  if(phase==='stats'){drawStats();return;}
+  if(phase==='menu'){drawMenu();drawAchToast();return;}
+  if(phase==='stats'){drawStats();drawAchToast();return;}
+  if(phase==='achievements'){drawAchievements();drawAchToast();return;}
   if(phase==='charSelect'){drawCharSelect();return;}
 
   let shakeX=0, shakeY=0;
@@ -1521,6 +1680,7 @@ function draw() {
     else drawRoundEnd();
   }
   if(phase==='gameOver') drawGameOver();
+  drawAchToast();
 }
 
 // ── Input for state transitions ───────────────────────────────────────────────
@@ -1557,6 +1717,7 @@ canvas.addEventListener('click', e => {
     return;
   }
   if(phase==='stats'){ phase='menu'; return; }
+  if(phase==='achievements'){ phase='menu'; return; }
   if (!window.netHooks.canMenuInput()) return;
   if(phase==='menu'){
     [1,3,5].forEach((r,i)=>{
@@ -1590,9 +1751,16 @@ function _checkBothConfirmed() {
 
 document.addEventListener('keydown', e=>{
   if(e.key==='m'||e.key==='M'){ window.BGM?.toggle(); return; }
-  if(e.key==='Escape'){ if(phase==='stats'){ phase='menu'; return; } }
-  if(e.key==='Tab'){ e.preventDefault(); if(phase==='menu'){ phase='stats'; SFX.click(); return; } if(phase==='stats'){ phase='menu'; return; } }
-  if(phase==='stats') return;
+  if(e.key==='Escape'){
+    if(phase==='stats'||phase==='achievements'){ phase='menu'; return; }
+  }
+  if(e.key==='Tab'){
+    e.preventDefault();
+    if(phase==='menu')         { phase='stats';        SFX.click(); return; }
+    if(phase==='stats')        { phase='achievements'; SFX.click(); return; }
+    if(phase==='achievements') { phase='menu';                      return; }
+  }
+  if(phase==='stats'||phase==='achievements') return;
   if(phase==='charSelect'){
     const N=CHARACTERS.length;
     if(e.key==='a'||e.key==='A'){ if(!p1Confirmed){p1CharIdx=(p1CharIdx+N-1)%N;SFX.click();} return; }
