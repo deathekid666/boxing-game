@@ -112,7 +112,8 @@ let shakeMag = 0;
 function mkFighter(x, color, dir) {
   return {
     x, y: 315, color, dir, depth: 0.5, jz: 0, jvz: 0, jumpCd: 0,
-    hp: MAX_HP, shield: MAX_SHIELD,
+    hp: MAX_HP, hpDisplay: MAX_HP, hpFlash: 0,
+    shield: MAX_SHIELD,
     shieldTimer: 0, vx: 0,
     punching: false, punchT: 0, punchCd: 0,
     kicking: false, kickT: 0, kickCd: 0,
@@ -173,6 +174,7 @@ function applyHit(attacker, defender, dmg, type, isTip) {
     d -= absorb;
   }
   defender.hp    = Math.max(0, defender.hp - d);
+  if (d > 0) defender.hpFlash = 10;
   defender.wobble = type==='super' ? 35 : 20;
   defender.hit    = type==='super' ? 18 : 12;
   defender.vx     = attacker.dir * (type==='super' ? 8 : 4);
@@ -366,6 +368,8 @@ function update() {
     if (p.superFlash>0) p.superFlash--;
     if (p.wobble>0)    p.wobble--;
     if (p.hit>0)       p.hit--;
+    if (p.hpFlash>0)   p.hpFlash--;
+    else if (p.hpDisplay > p.hp) p.hpDisplay = Math.max(p.hp, p.hpDisplay - 1.2);
     if (p.shieldTimer>0) p.shieldTimer--;
     else if (p.shield<MAX_SHIELD) p.shield=Math.min(MAX_SHIELD, p.shield+SHIELD_REGEN_RATE);
   }
@@ -555,10 +559,15 @@ function drawFighter(p) {
   ctx.restore();
 }
 
-function drawBar(x,y,w,h,val,max,c1,c2){
+function drawBar(x,y,w,h,val,max,c1,c2,ghost,flash){
   ctx.fillStyle='#222';ctx.beginPath();ctx.roundRect(x,y,w,h,5);ctx.fill();
-  const fw=(val/max)*w;
+  // Ghost (yellow) bar: shows pending drain between ghost and actual HP
+  if(ghost>val){const gw=Math.max(0,(ghost/max)*w);ctx.fillStyle='#c87800';ctx.beginPath();ctx.roundRect(x,y,gw,h,5);ctx.fill();}
+  // Actual bar
+  const fw=Math.max(0,(val/max)*w);
   if(fw>0){const g=ctx.createLinearGradient(x,0,x+w,0);g.addColorStop(0,c1);g.addColorStop(1,c2);ctx.fillStyle=g;ctx.beginPath();ctx.roundRect(x,y,fw,h,5);ctx.fill();}
+  // Hit flash: white pulse over the filled portion
+  if(flash>0&&fw>4){ctx.save();ctx.globalAlpha=(flash/10)*0.45;ctx.fillStyle='#fff';ctx.beginPath();ctx.roundRect(x,y,fw,h,5);ctx.fill();ctx.restore();}
   ctx.strokeStyle='#fff3';ctx.lineWidth=1;ctx.beginPath();ctx.roundRect(x,y,w,h,5);ctx.stroke();
 }
 function drawCdBtn(x,y,label,cd,maxCd,accent){
@@ -573,14 +582,14 @@ function drawCdBtn(x,y,label,cd,maxCd,accent){
 
 function drawHUD() {
   const bw=230;
-  drawBar(18,14,bw,20,p1.hp,MAX_HP,`hsl(${(p1.hp/MAX_HP)*120},80%,45%)`,`hsl(${(p1.hp/MAX_HP)*120},90%,60%)`);
+  drawBar(18,14,bw,20,p1.hp,MAX_HP,`hsl(${(p1.hp/MAX_HP)*120},80%,45%)`,`hsl(${(p1.hp/MAX_HP)*120},90%,60%)`,p1.hpDisplay,p1.hpFlash);
   drawBar(18,38,bw,10,p1.shield,MAX_SHIELD,'#44aaff','#88ddff');
   ctx.fillStyle='#fff';ctx.font='bold 12px sans-serif';ctx.textAlign='left';
   ctx.fillText(`${window.playerNames.p1}  ${Math.ceil(p1.hp)}`,26,27);
   drawCdBtn(18,52,'KICK',p1.kickCd,KICK_CD,'#ffaa00');
   drawCdBtn(65,52,'SUPER',p1.superCd,SUPER_CD,'#ff44ff');
   drawCdBtn(112,52,'DASH',p1.dashCd,DASH_CD,'#00ddff');
-  drawBar(W-18-bw,14,bw,20,p2.hp,MAX_HP,`hsl(${(p2.hp/MAX_HP)*120},90%,60%)`,`hsl(${(p2.hp/MAX_HP)*120},80%,45%)`);
+  drawBar(W-18-bw,14,bw,20,p2.hp,MAX_HP,`hsl(${(p2.hp/MAX_HP)*120},90%,60%)`,`hsl(${(p2.hp/MAX_HP)*120},80%,45%)`,p2.hpDisplay,p2.hpFlash);
   drawBar(W-18-bw,38,bw,10,p2.shield,MAX_SHIELD,'#88ddff','#44aaff');
   ctx.fillStyle='#fff';ctx.font='bold 12px sans-serif';ctx.textAlign='right';
   ctx.fillText(`${Math.ceil(p2.hp)}  ${window.playerNames.p2}`,W-26,27);
