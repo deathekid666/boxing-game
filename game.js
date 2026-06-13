@@ -211,6 +211,9 @@ let _achToasts   = []; // [{ id, t }]  t counts down from 240
 // Extra per-match flags
 let _mP1KDs = 0, _mWasLowHP = false, _mKOd = false, _mSuperLanded = false;
 let _lowHpTick = 0;
+let _hudPulse = 0;
+let countdownTimer = 0;
+let _rematchLocal = false, _rematchOpp = false;
 
 function _unlockAch(id) {
   if (unlockedAchs.has(id)) return;
@@ -371,17 +374,34 @@ function startGame() {
   p1Confirmed = false;
   p2Confirmed = false;
   cpuDifficulty = 'off';
+  _rematchLocal = false;
+  _rematchOpp = false;
   phase = 'charSelect';
   window.BGM?.setPhase('menu');
   window.netHooks.onStartGame();
 }
 
+function startVsAI(difficulty) {
+  window.playerNames.p2 = 'CPU';
+  currentRound = 1;
+  roundsWon = [0, 0];
+  roundStats = null;
+  p1Confirmed = false;
+  p2Confirmed = false;
+  _rematchLocal = false;
+  _rematchOpp = false;
+  cpuDifficulty = difficulty || 'medium';
+  phase = 'charSelect';
+  window.BGM?.setPhase('menu');
+}
+
 function startFight() {
   _mKOs = 0; _mDmg = 0; _mCombo = 0;
   _mP1KDs = 0; _mWasLowHP = false; _mKOd = false; _mSuperLanded = false; _lowHpTick = 0;
+  _hudPulse = 0;
   spawnFighters();
-  phase = 'fight';
-  SFX.bell();
+  countdownTimer = 180; // 3 seconds at 60 fps
+  phase = 'countdown';
   window.BGM?.setPhase('fight');
   if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
 }
@@ -441,14 +461,14 @@ function applyHit(attacker, defender, dmg, type, isTip) {
   shakeMag = type==='super' ? 14 : (isTip ? 7 : 4);
   shakeT   = type==='super' ? 22 : 12;
 
-  if (type==='super') { SFX.superHit(); if (attacker === p1) _mSuperLanded = true; }
-  else if (type==='kick') SFX.kick();
-  else SFX.punch();
+  if (type==='super') { SFX.superHit(); if (attacker === p1) _mSuperLanded = true; navigator.vibrate?.(150); }
+  else if (type==='kick') { SFX.kick(); navigator.vibrate?.(50); }
+  else { SFX.punch(); navigator.vibrate?.(30); }
   if (attacker.combo >= 3) SFX.impact(attacker.combo);
 
   if (hadShield && defender.shield===0) setTimeout(()=>SFX.shieldBreak(), 80);
   else if (hadShield) setTimeout(()=>SFX.shieldBlock(), 30);
-  if (defender.hp <= 0) setTimeout(()=>SFX.ko(), 150);
+  if (defender.hp <= 0) { setTimeout(()=>SFX.ko(), 150); navigator.vibrate?.([100,50,100]); }
 }
 
 // ── Collision checks ──────────────────────────────────────────────────────────
@@ -584,6 +604,13 @@ function updateCPU() {
 function update() {
   if (phase==='menu' || phase==='charSelect' || phase==='stats' || phase==='achievements') return;
 
+  if (phase === 'countdown') {
+    _hudPulse++;
+    countdownTimer--;
+    if (countdownTimer <= 0) { phase = 'fight'; SFX.bell(); }
+    return;
+  }
+
   if (phase==='roundEnd') {
     if (roundEndTimer > 0) {
       roundEndTimer--;
@@ -598,6 +625,7 @@ function update() {
 
   updateCPU();
 
+  _hudPulse++;
   if (hitStop > 0) { hitStop--; return; }
   if (shakeT > 0) shakeT--;
 
@@ -973,6 +1001,11 @@ function drawCdBtn(x,y,label,cd,maxCd,accent){
 function drawHUD() {
   const bw=230;
   drawBar(18,14,bw,20,p1.hp,p1.maxHp,`hsl(${(p1.hp/p1.maxHp)*120},80%,45%)`,`hsl(${(p1.hp/p1.maxHp)*120},90%,60%)`,p1.hpDisplay,p1.hpFlash);
+  if (p1.hp < p1.maxHp * 0.20) {
+    const a = 0.25 + Math.sin(_hudPulse * 0.18) * 0.20;
+    ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = '#ff2222';
+    ctx.beginPath(); ctx.roundRect(18, 14, bw, 20, 5); ctx.fill(); ctx.restore();
+  }
   drawBar(18,38,bw,10,p1.shield,MAX_SHIELD,'#44aaff','#88ddff');
   ctx.fillStyle='#fff';ctx.font='bold 12px sans-serif';ctx.textAlign='left';
   ctx.fillText(`${window.playerNames.p1}  ${Math.ceil(p1.hp)}`,26,27);
@@ -980,6 +1013,11 @@ function drawHUD() {
   drawCdBtn(65,52,'SUPER',p1.superCd,SUPER_CD,'#ff44ff');
   drawCdBtn(112,52,'DASH',p1.dashCd,DASH_CD,'#00ddff');
   drawBar(W-18-bw,14,bw,20,p2.hp,p2.maxHp,`hsl(${(p2.hp/p2.maxHp)*120},90%,60%)`,`hsl(${(p2.hp/p2.maxHp)*120},80%,45%)`,p2.hpDisplay,p2.hpFlash);
+  if (p2.hp < p2.maxHp * 0.20) {
+    const a = 0.25 + Math.sin(_hudPulse * 0.18 + 1) * 0.20;
+    ctx.save(); ctx.globalAlpha = a; ctx.fillStyle = '#ff2222';
+    ctx.beginPath(); ctx.roundRect(W-18-bw, 14, bw, 20, 5); ctx.fill(); ctx.restore();
+  }
   drawBar(W-18-bw,38,bw,10,p2.shield,MAX_SHIELD,'#88ddff','#44aaff');
   ctx.fillStyle='#fff';ctx.font='bold 12px sans-serif';ctx.textAlign='right';
   ctx.fillText(`${Math.ceil(p2.hp)}  ${window.playerNames.p2}`,W-26,27);
@@ -1286,21 +1324,22 @@ function drawMenu() {
   ctx.fillStyle='#ffe44d';ctx.beginPath();ctx.roundRect(W/2-100,310,200,55,12);ctx.fill();
   ctx.fillStyle='#111';ctx.font='bold 22px sans-serif';ctx.textAlign='center';
   ctx.fillText('START FIGHT',W/2,344);
-  ctx.font='13px sans-serif';ctx.fillStyle='#555';
-  ctx.fillText('click the buttons above to select',W/2,395);
-
+  ctx.fillStyle='rgba(68,180,255,0.15)';ctx.beginPath();ctx.roundRect(W/2-100,375,200,42,12);ctx.fill();
+  ctx.strokeStyle='#44aaff';ctx.lineWidth=1.5;ctx.beginPath();ctx.roundRect(W/2-100,375,200,42,12);ctx.stroke();
+  ctx.fillStyle='#44aaff';ctx.font='bold 16px sans-serif';ctx.textAlign='center';
+  ctx.fillText('🤖 Practice vs AI',W/2,402);
   // Win streak
   if (bestStreak > 0) {
-    const streakY = 435;
-    ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
+    const streakY = 430;
+    ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
     ctx.fillStyle = winStreak > 0 ? '#ffe44d' : '#555';
-    ctx.fillText(`🔥 Current streak: ${winStreak}`, W/2 - 90, streakY);
+    ctx.fillText(`🔥 Streak: ${winStreak}`, W/2 - 80, streakY);
     ctx.fillStyle = '#888';
-    ctx.fillText(`🏆 Best: ${bestStreak}`, W/2 + 80, streakY);
+    ctx.fillText(`🏆 Best: ${bestStreak}`, W/2 + 70, streakY);
   }
 
   // STATS button
-  const sbx = W/2-52, sby = 452, sbw = 104, sbh = 28;
+  const sbx = W/2-52, sby = 455, sbw = 104, sbh = 26;
   const played = statWins + statLosses + statDraws;
   ctx.fillStyle = 'rgba(40,40,50,0.85)';
   ctx.beginPath(); ctx.roundRect(sbx, sby, sbw, sbh, 7); ctx.fill();
@@ -1654,15 +1693,47 @@ function drawGameOver() {
     }
     ry += 22;
 
+    // Rematch button (online mode)
+    if (window.netIsOnline?.()) {
+      const rbx = CX - 70, rby = ry, rbw = 140, rbh = 32;
+      const rReady = _rematchLocal;
+      ctx.fillStyle = rReady ? 'rgba(68,255,136,0.18)' : 'rgba(255,228,77,0.10)';
+      ctx.beginPath(); ctx.roundRect(rbx, rby, rbw, rbh, 8); ctx.fill();
+      ctx.strokeStyle = rReady ? '#44ff88' : '#ffe44d'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.roundRect(rbx, rby, rbw, rbh, 8); ctx.stroke();
+      ctx.fillStyle = rReady ? '#44ff88' : '#ffe44d';
+      ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(rReady ? (_rematchOpp ? '🔄 Starting…' : '⏳ Waiting…') : '🔄 Rematch?', CX, rby + 21);
+      ry += 40;
+    }
+
     // Prompt
     ctx.font = '13px sans-serif'; ctx.fillStyle = '#666'; ctx.textAlign = 'center';
-    ctx.fillText('Press  SPACE  or tap to play again', CX, ry);
+    if (!window.netIsOnline?.())
+      ctx.fillText('Press  SPACE  or tap to play again', CX, ry);
   } else {
     // Fallback if roundStats not available
     ctx.font = '14px sans-serif'; ctx.fillStyle = '#666'; ctx.textAlign = 'center';
     ctx.fillText('Press  SPACE  or tap to play again', CX, top + CH - 28);
   }
 
+  ctx.restore();
+}
+
+function drawCountdown() {
+  const secs = Math.ceil(countdownTimer / 60);
+  const frac = (countdownTimer % 60) / 60;
+  const label = secs > 0 ? String(secs) : 'FIGHT!';
+  const scale = secs > 0 ? (1.0 + frac * 0.5) : (1.0 + (1 - frac) * 0.4);
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, frac * 3);
+  ctx.font = `bold ${Math.round(110 * scale)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 8;
+  ctx.strokeText(label, W/2, H/2 + 36);
+  ctx.fillStyle = secs > 0 ? '#ffe44d' : '#44ff88';
+  ctx.fillText(label, W/2, H/2 + 36);
   ctx.restore();
 }
 
@@ -1682,6 +1753,15 @@ function draw() {
   if(phase==='stats'){drawStats();drawAchToast();return;}
   if(phase==='achievements'){drawAchievements();drawAchToast();return;}
   if(phase==='charSelect'){drawCharSelect();return;}
+
+  if(phase==='countdown'){
+    drawCrowd();drawRing();
+    const sorted=[p1,p2].sort((a,b)=>a.depth-b.depth);
+    drawFighter(sorted[0]);drawFighter(sorted[1]);
+    drawHUD();
+    drawCountdown();
+    return;
+  }
 
   let shakeX=0, shakeY=0;
   if(shakeT>0){
@@ -1751,14 +1831,27 @@ canvas.addEventListener('click', e => {
       if(sx>=bx&&sx<=bx+bw&&sy>=by&&sy<=by+bh){ menuSelected=r; SFX.click(); }
     });
     if(sx>=W/2-100&&sx<=W/2+100&&sy>=310&&sy<=365){ SFX.click(); totalRounds=menuSelected; startGame(); return; }
+    if(sx>=W/2-100&&sx<=W/2+100&&sy>=375&&sy<=417){ SFX.click(); totalRounds=menuSelected; startVsAI('medium'); return; }
     // STATS button
-    if(sx>=W/2-52&&sx<=W/2+52&&sy>=452&&sy<=480){ SFX.click(); phase='stats'; return; }
+    if(sx>=W/2-52&&sx<=W/2+52&&sy>=455&&sy<=481){ SFX.click(); phase='stats'; return; }
     return;
   }
   if(phase==='roundEnd'||phase==='gameOver'){
     const needed=Math.ceil(totalRounds/2);
     const matchOver=roundsWon[0]>=needed||roundsWon[1]>=needed||currentRound>=totalRounds;
-    if(matchOver||phase==='gameOver'){ phase='menu'; window.netHooks.onReturnMenu(); }
+    if(matchOver||phase==='gameOver'){
+      // Check if Rematch button was clicked (online only)
+      if(window.netIsOnline?.()) {
+        // Rematch button: CX-70, ry (dynamically positioned — approximate check)
+        const CX=W/2, CH=432, top=H/2-CH/2-10;
+        const rbApproxY = top + 370;
+        if(sx>=CX-70&&sx<=CX+70&&sy>=rbApproxY-5&&sy<=rbApproxY+38){
+          if(!_rematchLocal){ _rematchLocal=true; SFX.click(); window.netHooks.onRematchRequest(); }
+          return;
+        }
+      }
+      phase='menu'; window.netHooks.onReturnMenu();
+    }
     else startNextRound();
   }
 });
@@ -1826,17 +1919,19 @@ document.addEventListener('keydown', e=>{
 
 // ── Player names — overridden by netplay.js after name exchange ───────────────
 window.playerNames = { p1: 'P1', p2: 'P2' };
+window.netIsOnline = () => false; // overridden by netplay.js
 
 // ── Netplay hooks — overridden by netplay.js; safe no-ops by default ─────────
 window.netHooks = {
-  canEndRound:  () => true,   // guest returns false to suppress local KO detection
-  onEndRound:   () => {},     // host sends round-end event to guest
-  canStartNext: () => true,   // guest returns false to suppress auto-advance
-  onStartNext:  () => {},     // host sends next-round event to guest
-  canMenuInput: () => true,   // guest returns false so only host controls menus
-  onStartGame:  () => {},     // host sends game-start event to guest
-  onReturnMenu: () => {},     // host sends return-to-menu event to guest
-  skipUpdate:   () => false,  // guest returns true so host state drives simulation
+  canEndRound:      () => true,
+  onEndRound:       () => {},
+  canStartNext:     () => true,
+  onStartNext:      () => {},
+  canMenuInput:     () => true,
+  onStartGame:      () => {},
+  onReturnMenu:     () => {},
+  skipUpdate:       () => false,
+  onRematchRequest: () => {},  // called when local player requests rematch
 };
 
 // Public API for netplay.js to drive game state from received network events
@@ -1846,7 +1941,9 @@ window.Game = {
   get totalRounds()  { return totalRounds; },
   set totalRounds(v) { totalRounds = v; },
   startGame(rounds)  { if (rounds !== undefined) totalRounds = rounds; startGame(); },
+  startVsAI(diff)    { startVsAI(diff); },
   startNextRound()   { startNextRound(); },
+  oppRematch()       { _rematchOpp = true; if (_rematchLocal) { startGame(); } },
   doEndRound(msg, p1Win, p2Win) { _endRound(msg, p1Win, p2Win); },
   getState() {
     if (!p1 || !p2) return null;

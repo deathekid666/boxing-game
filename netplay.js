@@ -43,6 +43,11 @@
   window.netHooks.onReturnMenu = () => {
     if (mySlot === 'p1' && conn) conn.send({ type:'returnMenu' });
   };
+  window.netHooks.onRematchRequest = () => {
+    if (conn) conn.send({ type:'rematchRequest' });
+  };
+
+  window.netIsOnline = () => mode === 'connected';
 
   // ── Per-frame tick (called at top of game loop) ──────────────────────────────
   window.netTick = function () {
@@ -122,6 +127,10 @@
       case 'returnMenu':
         window.Game.phase = 'menu';
         hideDisconnectOverlay();
+        break;
+
+      case 'rematchRequest':
+        window.Game.oppRematch();
         break;
     }
   }
@@ -366,6 +375,17 @@
         '<button id="np-host-btn" style="' + bCSS('#ffe44d','#111') + '">🎮 Host Game</button>' +
         '<div style="margin:7px 0;text-align:center;color:#383848;font-size:11px">— or —</div>' +
         '<button id="np-join-btn" style="' + bCSS('#3a6ecc','#fff') + '">🔗 Join Game</button>' +
+        '<div style="margin:7px 0;text-align:center;color:#383848;font-size:11px">— or —</div>' +
+        '<button id="np-ai-btn" style="' + bCSS('#1a3a1a','#44bb66') + '">🤖 Practice vs AI</button>' +
+      '</div>' +
+
+      // ── AI difficulty screen ──
+      '<div class="np-screen" id="np-ai" style="display:none">' +
+        '<div style="font-size:11px;color:#888;margin-bottom:8px;text-align:center">Select difficulty</div>' +
+        '<button id="np-ai-easy" style="' + bCSS('#1a2e1a','#88ee88') + '">🟢 Easy</button>' +
+        '<button id="np-ai-med" style="' + bCSS('#2a2a0a','#eeee44') + '">🟡 Medium</button>' +
+        '<button id="np-ai-hard" style="' + bCSS('#2e1a1a','#ee5544') + '">🔴 Hard</button>' +
+        '<button id="np-ai-back" style="' + bCSS('#18182a','#555') + '">← Back</button>' +
       '</div>' +
 
       // ── hosting screen ──
@@ -424,6 +444,13 @@
     panel.querySelector('#np-host-btn').addEventListener('click', hostGame);
 
     panel.querySelector('#np-join-btn').addEventListener('click', () => showScreen('join'));
+
+    panel.querySelector('#np-ai-btn').addEventListener('click', () => showScreen('ai'));
+
+    panel.querySelector('#np-ai-easy').addEventListener('click', () => { panel.style.display='none'; window.Game.startVsAI('easy'); });
+    panel.querySelector('#np-ai-med').addEventListener('click',  () => { panel.style.display='none'; window.Game.startVsAI('medium'); });
+    panel.querySelector('#np-ai-hard').addEventListener('click', () => { panel.style.display='none'; window.Game.startVsAI('hard'); });
+    panel.querySelector('#np-ai-back').addEventListener('click', () => showScreen('mode'));
 
     panel.querySelector('#np-copy-btn').addEventListener('click', () => {
       const code = codeValueEl?.textContent.trim();
