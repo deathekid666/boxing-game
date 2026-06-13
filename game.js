@@ -439,6 +439,8 @@ function startFight() {
   _mKOs = 0; _mDmg = 0; _mCombo = 0;
   _mP1KDs = 0; _mWasLowHP = false; _mKOd = false; _mSuperLanded = false; _lowHpTick = 0;
   _hudPulse = 0;
+  window.playerNames.p1 = CHARACTERS[p1CharIdx].name;
+  if (cpuDifficulty === 'off' && !window.netIsOnline()) window.playerNames.p2 = CHARACTERS[p2CharIdx].name;
   spawnFighters();
   countdownTimer = 180; // 3 seconds at 60 fps
   phase = 'countdown';
