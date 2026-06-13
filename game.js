@@ -791,16 +791,16 @@ function update() {
   if (inputState.p2.punch && noAction(p2))                          { p2.punching=true; p2.punchT=0; }
   if (inputState.p1.kick  && noAction(p1) && p1.kickCd<=0)         { p1.kicking=true;  p1.kickT=0;  p1.kickCd=KICK_CD; }
   if (inputState.p2.kick  && noAction(p2) && p2.kickCd<=0)         { p2.kicking=true;  p2.kickT=0;  p2.kickCd=KICK_CD; }
-  if (inputState.p1.super && noAction(p1) && p1.superCd<=0)        { p1.supering=true; p1.superT=0; p1.superCd=SUPER_CD; p1.superFlash=30; p1.superHit=false; SFX.superCharge(); setTimeout(()=>{ if(p1.supering) SFX.superStretch(); }, 200); }
-  if (inputState.p2.super && noAction(p2) && p2.superCd<=0)        { p2.supering=true; p2.superT=0; p2.superCd=SUPER_CD; p2.superFlash=30; p2.superHit=false; SFX.superCharge(); setTimeout(()=>{ if(p2.supering) SFX.superStretch(); }, 200); }
+  if (inputState.p1.super && noAction(p1) && p1.superCd<=0)        { p1.supering=true; p1.superT=0; p1.superCd=SUPER_CD; p1.superFlash=30; p1.superHit=false; SFX.superCharge(); setTimeout(()=>{ if(p1.supering) SFX.superStretch(); }, 60); }
+  if (inputState.p2.super && noAction(p2) && p2.superCd<=0)        { p2.supering=true; p2.superT=0; p2.superCd=SUPER_CD; p2.superFlash=30; p2.superHit=false; SFX.superCharge(); setTimeout(()=>{ if(p2.supering) SFX.superStretch(); }, 60); }
 
   // advance timers
   if (p1.punching) { p1.punchT+=0.07; if (p1.punchT>=1) { p1.punching=false; p1.punchT=0; p1.punchCd=PUNCH_CD; } }
   if (p2.punching) { p2.punchT+=0.07; if (p2.punchT>=1) { p2.punching=false; p2.punchT=0; p2.punchCd=PUNCH_CD; } }
   if (p1.kicking)  { p1.kickT+=0.055; if (p1.kickT>=1)  { p1.kicking=false;  p1.kickT=0; } }
   if (p2.kicking)  { p2.kickT+=0.055; if (p2.kickT>=1)  { p2.kicking=false;  p2.kickT=0; } }
-  if (p1.supering) { p1.superT+=0.028; if (p1.superT>=1) { p1.supering=false; p1.superT=0; if(!p1.superHit){ floaties.push({x:p1.x+p1.dir*SUPER_REACH*0.55,y:fighterScreenY(p1)-55,vx:p1.dir*3,vy:-2,t:0,col:'#aaddff',size:22,txt:'WHOOSH! 💨'}); SFX.superWhiff(); } } }
-  if (p2.supering) { p2.superT+=0.028; if (p2.superT>=1) { p2.supering=false; p2.superT=0; if(!p2.superHit){ floaties.push({x:p2.x+p2.dir*SUPER_REACH*0.55,y:fighterScreenY(p2)-55,vx:p2.dir*3,vy:-2,t:0,col:'#aaddff',size:22,txt:'WHOOSH! 💨'}); SFX.superWhiff(); } } }
+  if (p1.supering) { p1.superT+=0.022; if (p1.superT>=1) { p1.supering=false; p1.superT=0; if(!p1.superHit){ floaties.push({x:p1.x+p1.dir*SUPER_REACH*0.55,y:fighterScreenY(p1)-55,vx:p1.dir*3,vy:-2,t:0,col:'#aaddff',size:22,txt:'WHOOSH! 💨'}); SFX.superWhiff(); } } }
+  if (p2.supering) { p2.superT+=0.022; if (p2.superT>=1) { p2.supering=false; p2.superT=0; if(!p2.superHit){ floaties.push({x:p2.x+p2.dir*SUPER_REACH*0.55,y:fighterScreenY(p2)-55,vx:p2.dir*3,vy:-2,t:0,col:'#aaddff',size:22,txt:'WHOOSH! 💨'}); SFX.superWhiff(); } } }
   for (const p of [p1,p2]) {
     if (p.kickCd>0)    p.kickCd--;
     if (p.superCd>0)   p.superCd--;
@@ -1001,21 +1001,21 @@ function drawFighter(p) {
 
   if (p.supering) {
     const t = p.superT;
-    // Phase 1 (t<0.20): wind-up — arm coils backward
-    // Phase 2 (t 0.20→1.0): extension using sin curve
+    // Phase 1 (t<0.08): quick wind-up — arm coils slightly backward
+    // Phase 2 (t 0.08→1.0): full extension using sin curve
     let visualFrac;
-    if (t < 0.20) {
-      visualFrac = -0.10 * Math.sin((t / 0.20) * Math.PI);
+    if (t < 0.08) {
+      visualFrac = -0.10 * Math.sin((t / 0.08) * Math.PI);
     } else {
-      visualFrac = Math.sin(((t - 0.20) / 0.80) * Math.PI);
+      visualFrac = Math.sin(((t - 0.08) / 0.92) * Math.PI);
     }
     let sArmLen = 22 + visualFrac * (SUPER_REACH - 22);
     sArmLen = Math.max(4, Math.min(sArmLen, fighterGap - 10));
     const extFrac = Math.max(0, visualFrac); // 0→1 during extension
 
     // Wind-up charge effect
-    if (t < 0.20) {
-      const chargeT = t / 0.20;
+    if (t < 0.08) {
+      const chargeT = t / 0.08;
       ctx.save();
       ctx.globalAlpha = chargeT * 0.55 * (0.5 + 0.5 * Math.sin(nowMs / 25));
       ctx.beginPath(); ctx.arc(-p.dir * 14, armY, 10 + chargeT * 22, 0, Math.PI * 2);
@@ -1063,31 +1063,51 @@ function drawFighter(p) {
 
     // Noodle arm — sine-wave wiggle along arm length
     const segs = 10;
-    ctx.beginPath();
-    ctx.moveTo(p.dir * 12, armY);
-    for (let seg = 1; seg <= segs; seg++) {
+    const noodlePts = [];
+    for (let seg = 0; seg <= segs; seg++) {
       const segFrac = seg / segs;
       const segX = p.dir * (12 + segFrac * (sArmLen - 12));
-      const wiggle = extFrac * 16 * Math.sin(segFrac * Math.PI * 3 - nowMs / 55) * (1 - segFrac * 0.6);
-      ctx.lineTo(segX, armY + wiggle);
+      const wiggle = extFrac * 18 * Math.sin(segFrac * Math.PI * 3 - nowMs / 55) * (1 - segFrac * 0.6);
+      noodlePts.push([segX, armY + wiggle]);
     }
-    ctx.strokeStyle = col; ctx.lineWidth = 13; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke();
-    ctx.strokeStyle = dark; ctx.lineWidth = 2.5; ctx.stroke();
+    // Glow pass — wide semi-transparent halo
+    ctx.beginPath();
+    ctx.moveTo(noodlePts[0][0], noodlePts[0][1]);
+    for (let i = 1; i < noodlePts.length; i++) ctx.lineTo(noodlePts[i][0], noodlePts[i][1]);
+    ctx.save();
+    ctx.globalAlpha = 0.45 * extFrac;
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 32; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke();
+    ctx.globalAlpha = 0.60 * extFrac;
+    ctx.strokeStyle = '#ffee00'; ctx.lineWidth = 22; ctx.stroke();
+    ctx.restore();
+    // Main arm stroke — bright yellow-white core
+    ctx.beginPath();
+    ctx.moveTo(noodlePts[0][0], noodlePts[0][1]);
+    for (let i = 1; i < noodlePts.length; i++) ctx.lineTo(noodlePts[i][0], noodlePts[i][1]);
+    ctx.strokeStyle = '#ffff88'; ctx.lineWidth = 15; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke();
+    ctx.strokeStyle = col; ctx.lineWidth = 10; ctx.stroke();
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3; ctx.stroke();
 
     // Fist
     const fx = p.dir * sArmLen;
-    const fistR = 26;
-    if (extFrac > 0.70) {
+    const fistR = 28 + extFrac * 6;
+    // Outer glow ring
+    ctx.save();
+    ctx.globalAlpha = (0.35 + Math.sin(nowMs / 35) * 0.20) * extFrac;
+    ctx.beginPath(); ctx.arc(fx, armY, fistR + 18, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffdd00'; ctx.fill();
+    ctx.restore();
+    if (extFrac > 0.55) {
       ctx.save();
-      ctx.globalAlpha = 0.55 + Math.sin(nowMs / 35) * 0.30;
-      ctx.beginPath(); ctx.arc(fx, armY, fistR + 12, 0, Math.PI * 2);
+      ctx.globalAlpha = 0.75 + Math.sin(nowMs / 28) * 0.20;
+      ctx.beginPath(); ctx.arc(fx, armY, fistR + 8, 0, Math.PI * 2);
       ctx.fillStyle = '#ff6600'; ctx.fill();
       ctx.restore();
     }
     ctx.beginPath(); ctx.arc(fx, armY, fistR, 0, Math.PI * 2);
-    ctx.fillStyle = '#ffff44'; ctx.fill();
-    ctx.strokeStyle = dark; ctx.lineWidth = 2; ctx.stroke();
-    for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.moveTo(fx+p.dir*(4+i*3),armY-9); ctx.lineTo(fx+p.dir*(4+i*3),armY+9); ctx.strokeStyle=dark; ctx.lineWidth=1.5; ctx.stroke(); }
+    ctx.fillStyle = '#ffffff'; ctx.fill();
+    ctx.strokeStyle = '#ffaa00'; ctx.lineWidth = 3; ctx.stroke();
+    for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.moveTo(fx+p.dir*(4+i*3),armY-9); ctx.lineTo(fx+p.dir*(4+i*3),armY+9); ctx.strokeStyle='#cc8800'; ctx.lineWidth=2; ctx.stroke(); }
   } else {
     // Normal punch arm
     let armLen = 22;
