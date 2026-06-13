@@ -55,7 +55,14 @@ const SFX = {
   bell()       { tone(900,880,0.5,'square',0.2); tone(900,880,0.5,'triangle',0.15,0.02); },
   victory()    { [262,330,392,523,659].forEach((f,i)=>setTimeout(()=>tone(f,f,0.22,'square',0.2),i*110)); },
   click()      { tone(700,1100,0.07,'triangle',0.15); },
-  dodge()      { tone(500,200,0.12,'sine',0.15); }
+  dodge()      { tone(500,200,0.12,'sine',0.15); },
+  dash()       { tone(400,100,0.15,'sawtooth',0.12); noiseBurst(0.06,0.10,0,500); },
+  jump()       { tone(200,600,0.12,'sine',0.15); },
+  land()       { tone(100,40,0.12,'square',0.20); noiseBurst(0.05,0.18,0,600); },
+  lowHp()      { tone(60,50,0.15,'sine',0.25); setTimeout(()=>tone(60,50,0.12,'sine',0.18),180); },
+  timeWarn()   { tone(800,780,0.06,'square',0.12); },
+  roundWin()   { [392,523,659].forEach((f,i)=>setTimeout(()=>tone(f,f,0.18,'square',0.22),i*90)); },
+  impact(n)    { const v=Math.min(0.35,0.15+n*0.02); tone(200,60,0.2,'sawtooth',v); noiseBurst(0.1,v*0.8,0,2000); },
 };
 
 // ── Characters ───────────────────────────────────────────────────────────────
@@ -203,6 +210,7 @@ let _achToasts   = []; // [{ id, t }]  t counts down from 240
 
 // Extra per-match flags
 let _mP1KDs = 0, _mWasLowHP = false, _mKOd = false, _mSuperLanded = false;
+let _lowHpTick = 0;
 
 function _unlockAch(id) {
   if (unlockedAchs.has(id)) return;
@@ -370,7 +378,7 @@ function startGame() {
 
 function startFight() {
   _mKOs = 0; _mDmg = 0; _mCombo = 0;
-  _mP1KDs = 0; _mWasLowHP = false; _mKOd = false; _mSuperLanded = false;
+  _mP1KDs = 0; _mWasLowHP = false; _mKOd = false; _mSuperLanded = false; _lowHpTick = 0;
   spawnFighters();
   phase = 'fight';
   SFX.bell();
@@ -436,6 +444,7 @@ function applyHit(attacker, defender, dmg, type, isTip) {
   if (type==='super') { SFX.superHit(); if (attacker === p1) _mSuperLanded = true; }
   else if (type==='kick') SFX.kick();
   else SFX.punch();
+  if (attacker.combo >= 3) SFX.impact(attacker.combo);
 
   if (hadShield && defender.shield===0) setTimeout(()=>SFX.shieldBreak(), 80);
   else if (hadShield) setTimeout(()=>SFX.shieldBlock(), 30);
@@ -598,10 +607,10 @@ function update() {
 
   // dash trigger — consume the one-shot dash signal from inputState
   if (inputState.p1.dash !== 0 && p1.dashCd<=0 && p1.dashT<=0 && canAct(p1)) {
-    p1.dashT=DASH_FRAMES; p1.dashDir=inputState.p1.dash; p1.dashCd=DASH_CD; SFX.click();
+    p1.dashT=DASH_FRAMES; p1.dashDir=inputState.p1.dash; p1.dashCd=DASH_CD; SFX.dash();
   }
   if (inputState.p2.dash !== 0 && p2.dashCd<=0 && p2.dashT<=0 && canAct(p2)) {
-    p2.dashT=DASH_FRAMES; p2.dashDir=inputState.p2.dash; p2.dashCd=DASH_CD; SFX.click();
+    p2.dashT=DASH_FRAMES; p2.dashDir=inputState.p2.dash; p2.dashCd=DASH_CD; SFX.dash();
   }
   inputState.p1.dash = 0;
   inputState.p2.dash = 0;
@@ -631,14 +640,14 @@ function update() {
     if (p.jz > 0 || p.jvz < 0) {
       p.jvz += GRAVITY;
       p.jz = Math.max(0, p.jz - p.jvz);
-      if (p.jz === 0 && p.jvz >= 0) { p.jvz = 0; p.jumpCd = JUMP_CD; }
+      if (p.jz === 0 && p.jvz >= 0) { p.jvz = 0; p.jumpCd = JUMP_CD; SFX.land(); }
     }
     if (p.jumpCd > 0) p.jumpCd--;
   }
 
   // Jump trigger (one-shot consumed here)
-  if (inputState.p1.jump && p1.jz === 0 && p1.jumpCd <= 0 && canAct(p1)) { p1.jvz = JUMP_VZ; }
-  if (inputState.p2.jump && p2.jz === 0 && p2.jumpCd <= 0 && canAct(p2)) { p2.jvz = JUMP_VZ; }
+  if (inputState.p1.jump && p1.jz === 0 && p1.jumpCd <= 0 && canAct(p1)) { p1.jvz = JUMP_VZ; SFX.jump(); }
+  if (inputState.p2.jump && p2.jz === 0 && p2.jumpCd <= 0 && canAct(p2)) { p2.jvz = JUMP_VZ; SFX.jump(); }
   inputState.p1.jump = false;
   inputState.p2.jump = false;
 
@@ -725,6 +734,14 @@ function update() {
   if (p1.hp < p1.maxHp * 0.25) _mWasLowHP = true;
   if (p1.combo >= 5) _unlockAch('combo_king');
 
+  // Low-HP heartbeat (either fighter below 25%)
+  _lowHpTick++;
+  if ((p1.hp < p1.maxHp * 0.25 || p2.hp < p2.maxHp * 0.25) && _lowHpTick % 90 === 0) SFX.lowHp();
+
+  // Time warning — tick every second in last 10 seconds
+  const _timeLeft = ROUND_TIME - roundFrame;
+  if (_timeLeft > 0 && _timeLeft <= 600 && _timeLeft % 60 === 0) SFX.timeWarn();
+
   for (const f of floaties) { f.x+=f.vx; f.y+=f.vy; f.vy+=0.12; f.t++; }
   floaties = floaties.filter(f=>f.t<65);
 
@@ -772,6 +789,7 @@ function _endRound(msg, p1Win, p2Win) {
     setTimeout(()=>SFX.victory(), 700);
   } else {
     phase = 'roundEnd';
+    if (p1Win > 0 || p2Win > 0) setTimeout(()=>SFX.roundWin(), 300);
   }
 }
 
