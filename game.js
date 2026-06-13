@@ -1928,20 +1928,78 @@ function drawArcadeVS() {
 }
 
 function drawArcadeOver() {
-  ctx.fillStyle = 'rgba(0,0,0,0.93)'; ctx.fillRect(0, 0, W, H);
+  const CX = W / 2;
+  ctx.fillStyle = '#080004'; ctx.fillRect(0, 0, W, H);
+  const vg = ctx.createRadialGradient(CX, H / 2, 10, CX, H / 2, 320);
+  vg.addColorStop(0, 'rgba(160,0,0,0.22)'); vg.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+
   const opp = ARCADE_OPPONENTS[Math.min(arcadeIdx, ARCADE_OPPONENTS.length - 1)];
   ctx.save(); ctx.textAlign = 'center';
-  ctx.font = 'bold 56px sans-serif';
-  ctx.strokeStyle = '#000'; ctx.lineWidth = 8;
-  ctx.strokeText('GAME  OVER', W/2, H/2 - 44);
-  ctx.fillStyle = '#ff4444';
-  ctx.fillText('GAME  OVER', W/2, H/2 - 44);
-  ctx.font = '18px sans-serif'; ctx.fillStyle = '#888';
-  ctx.fillText('Defeated by  ' + opp.name, W/2, H/2 + 2);
-  ctx.font = '13px sans-serif'; ctx.fillStyle = '#555';
-  ctx.fillText('Reached fight ' + (arcadeIdx + 1) + ' of ' + ARCADE_OPPONENTS.length, W/2, H/2 + 26);
-  ctx.font = '13px sans-serif'; ctx.fillStyle = '#3a3a3a';
-  ctx.fillText('Press  SPACE  or tap to return', W/2, H - 28);
+
+  ctx.font = '11px sans-serif'; ctx.fillStyle = '#3a3a3a';
+  ctx.fillText('ARCADE MODE', CX, 36);
+
+  ctx.font = 'bold 64px sans-serif';
+  ctx.strokeStyle = '#200'; ctx.lineWidth = 10;
+  ctx.strokeText('GAME  OVER', CX, H / 2 - 96);
+  ctx.fillStyle = '#cc2222';
+  ctx.fillText('GAME  OVER', CX, H / 2 - 96);
+
+  ctx.font = '13px sans-serif'; ctx.fillStyle = '#777';
+  ctx.fillText('Knocked out by', CX, H / 2 - 54);
+  ctx.font = 'bold 19px sans-serif'; ctx.fillStyle = '#ff6644';
+  ctx.fillText(opp.name, CX, H / 2 - 32);
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(CX - 190, H / 2 - 16); ctx.lineTo(CX + 190, H / 2 - 16); ctx.stroke();
+
+  // Progress ladder
+  ctx.font = '9px sans-serif'; ctx.fillStyle = '#3a3a3a';
+  ctx.fillText('YOUR RUN', CX, H / 2 + 4);
+  const n = ARCADE_OPPONENTS.length;
+  const stepW = 58, r = 13;
+  const lx = CX - ((n - 1) * stepW) / 2;
+  for (let i = 0; i < n; i++) {
+    const x = lx + i * stepW, y = H / 2 + 32;
+    if (i < n - 1) {
+      ctx.strokeStyle = i < arcadeIdx ? '#2a5a2a' : '#1e1e1e'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x + r + 1, y); ctx.lineTo(x + stepW - r - 1, y); ctx.stroke();
+    }
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = i < arcadeIdx ? '#1a3a1a' : i === arcadeIdx ? '#3a0a0a' : '#121212'; ctx.fill();
+    ctx.strokeStyle = i < arcadeIdx ? '#44aa44' : i === arcadeIdx ? '#cc2222' : '#2a2a2a';
+    ctx.lineWidth = 2; ctx.stroke();
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillStyle = i < arcadeIdx ? '#44cc44' : i === arcadeIdx ? '#ff4444' : '#2a2a2a';
+    ctx.fillText(i < arcadeIdx ? '✓' : i === arcadeIdx ? '✗' : String(i + 1), x, y + 4);
+    ctx.font = '8px sans-serif'; ctx.fillStyle = i <= arcadeIdx ? '#555' : '#252525';
+    ctx.fillText(ARCADE_OPPONENTS[i].name.split(' ').pop(), x, y + r + 11);
+  }
+
+  if (roundStats) {
+    ctx.font = '11px sans-serif'; ctx.fillStyle = '#444';
+    ctx.fillText(`Final fight — ${roundStats.p1.dmgDealt} dmg dealt  ·  ${roundStats.p1.knockdowns} knockdown${roundStats.p1.knockdowns !== 1 ? 's' : ''}`, CX, H / 2 + 72);
+  }
+
+  // Buttons
+  const btnW = 148, btnH = 36, gap = 16, by = H / 2 + 92;
+  const b1x = CX - btnW - gap / 2, b2x = CX + gap / 2;
+
+  ctx.fillStyle = 'rgba(255,90,30,0.12)';
+  ctx.beginPath(); ctx.roundRect(b1x, by, btnW, btnH, 8); ctx.fill();
+  ctx.strokeStyle = '#cc4422'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.roundRect(b1x, by, btnW, btnH, 8); ctx.stroke();
+  ctx.font = 'bold 12px sans-serif'; ctx.fillStyle = '#ff7755';
+  ctx.fillText('R  →  Try Again', b1x + btnW / 2, by + 23);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.03)';
+  ctx.beginPath(); ctx.roundRect(b2x, by, btnW, btnH, 8); ctx.fill();
+  ctx.strokeStyle = '#333'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.roundRect(b2x, by, btnW, btnH, 8); ctx.stroke();
+  ctx.font = 'bold 12px sans-serif'; ctx.fillStyle = '#555';
+  ctx.fillText('SPACE  →  Menu', b2x + btnW / 2, by + 23);
+
   ctx.restore();
 }
 
@@ -2090,7 +2148,13 @@ canvas.addEventListener('click', e => {
   }
   if(phase==='stats'){ phase='menu'; return; }
   if(phase==='achievements'){ phase='menu'; return; }
-  if(phase==='arcadeOver'||phase==='arcadeComplete'){ isArcade=false; phase='menu'; window.BGM?.setPhase('menu'); return; }
+  if(phase==='arcadeComplete'){ isArcade=false; phase='menu'; window.BGM?.setPhase('menu'); return; }
+  if(phase==='arcadeOver'){
+    const CX=W/2, btnW=148, gap=16, by=H/2+92, btnH=36;
+    const b1x=CX-btnW-gap/2;
+    if(sx>=b1x&&sx<=b1x+btnW&&sy>=by&&sy<=by+btnH){ startArcade(); return; }
+    isArcade=false; phase='menu'; window.BGM?.setPhase('menu'); return;
+  }
   if (!window.netHooks.canMenuInput()) return;
   if(phase==='menu'){
     [1,3,5].forEach((r,i)=>{
@@ -2157,6 +2221,7 @@ function _checkBothConfirmed() {
 document.addEventListener('keydown', e=>{
   if(e.key==='m'||e.key==='M'){ window.BGM?.toggle(); return; }
   if(e.key==='F11'){ e.preventDefault(); _toggleFullscreen(); return; }
+  if(e.key==='r'||e.key==='R'){ if(phase==='arcadeOver'){ startArcade(); return; } }
   if(e.key==='Escape'){
     if(phase==='stats'||phase==='achievements'){ phase='menu'; return; }
     if(phase==='arcadeOver'||phase==='arcadeComplete'){ isArcade=false; phase='menu'; window.BGM?.setPhase('menu'); return; }
