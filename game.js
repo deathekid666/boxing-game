@@ -584,11 +584,11 @@ function updateCPU() {
       inputState.p2.punch = true;
     }
     _cpuReactTimer = cfg.react + Math.floor(Math.random() * cfg.jitter);
-  } else if (absDx > PUNCH_REACH + 60) {
+  } else if (absDx > PUNCH_REACH - 15) {
     _cpuHoldLeft  = dx < 0;
     _cpuHoldRight = dx > 0;
     _cpuHoldDuck  = false;
-    if (absDx > PUNCH_REACH + 130 && p2.dashCd <= 0 && roll < cfg.dashChance) {
+    if (absDx > PUNCH_REACH + 80 && p2.dashCd <= 0 && roll < cfg.dashChance) {
       inputState.p2.dash = dx < 0 ? -1 : 1;
     }
     _cpuReactTimer = cfg.approachTick;
