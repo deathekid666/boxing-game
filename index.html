@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>🥊 Funny Boxing Game</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    background: #111;
+    overflow: hidden;
+    touch-action: none;
+    height: 100%;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: sans-serif;
+  }
+  canvas {
+    border-radius: 12px;
+    display: block;
+    /* Scale to fit any screen while preserving the 820×490 aspect ratio.
+       min() picks whichever dimension would overflow first. */
+    width: min(820px, 100vw, calc(100vh * 820 / 490));
+    height: auto;
+    touch-action: none;
+  }
+  .controls {
+    color: #aaa; font-size: 13px; margin-top: 10px;
+    display: flex; gap: 16px; flex-wrap: wrap; justify-content: center;
+  }
+  .controls span { background: #222; padding: 5px 12px; border-radius: 8px; }
+
+  /* Portrait rotation prompt — hidden by default, shown by touch-controls.js */
+  #orient-overlay {
+    display: none;        /* JS switches this to 'flex' in portrait */
+    position: fixed;
+    inset: 0;
+    background: #111;
+    z-index: 2000;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    text-align: center;
+  }
+  #orient-overlay .icon { font-size: 72px; animation: spin 2s ease-in-out infinite alternate; }
+  #orient-overlay .msg  { color: #fff; font-size: 26px; font-weight: bold; }
+  #orient-overlay .sub  { color: #777; font-size: 15px; }
+  @keyframes spin { from { transform: rotate(-20deg); } to { transform: rotate(20deg); } }
+</style>
+</head>
+<body>
+
+<!-- Shown on portrait mobile; hidden otherwise -->
+<div id="orient-overlay">
+  <div class="icon">📱</div>
+  <div class="msg">Rotate your device</div>
+  <div class="sub">This game is played in landscape</div>
+</div>
+
+<canvas id="c" width="820" height="490"></canvas>
+<div class="controls">
+  <span>🟦 P1: A/D move (×2=dash) &nbsp; hold S to duck &nbsp; F punch &nbsp; G kick &nbsp; H super</span>
+  <span>🟥 P2: ←/→ move (×2=dash) &nbsp; hold ↓ to duck &nbsp; L punch &nbsp; K kick &nbsp; J super</span>
+  <span>🔊 Click/press a key to enable sound</span>
+</div>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="input.js"></script>
+<script src="touch-controls.js"></script>
+<script src="game.js"></script>
+<script src="netplay.js"></script>
+</body>
+</html>
