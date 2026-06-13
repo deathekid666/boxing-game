@@ -1182,7 +1182,11 @@ function drawCharSelect() {
   ctx.fillStyle = '#ffe44d'; ctx.fillText('SELECT  YOUR  FIGHTER', W/2, 56);
 
   ctx.font = '11px sans-serif'; ctx.fillStyle = '#444';
-  ctx.fillText('P1: A / D  navigate  ·  F  confirm          P2: ← / →  navigate  ·  L  confirm', W/2, 74);
+  if (cpuDifficulty !== 'off') {
+    ctx.fillText('A / D  navigate  ·  F  confirm  ·  ← / →  pick CPU fighter', W/2, 74);
+  } else {
+    ctx.fillText('P1: A / D  navigate  ·  F  confirm          P2: ← / →  navigate  ·  L  confirm', W/2, 74);
+  }
 
   const CW = 158, CH = 285, GAP = 12;
   const totalW = CHARACTERS.length * CW + (CHARACTERS.length - 1) * GAP;
@@ -1255,24 +1259,49 @@ function drawCharSelect() {
       ctx.fillText('✓ P1', cx + 27, cardY + 16);
     }
     if (isP2 && p2Confirmed) {
-      ctx.fillStyle = 'rgba(255,68,68,0.90)';
+      const badge = cpuDifficulty !== 'off' ? 'CPU ✓' : 'P2 ✓';
+      ctx.fillStyle = cpuDifficulty !== 'off' ? 'rgba(100,200,100,0.90)' : 'rgba(255,68,68,0.90)';
       ctx.beginPath(); ctx.roundRect(cx + CW - 50, cardY + 4, 46, 18, 5); ctx.fill();
       ctx.font = 'bold 10px sans-serif'; ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
-      ctx.fillText('P2 ✓', cx + CW - 27, cardY + 16);
+      ctx.fillText(badge, cx + CW - 27, cardY + 16);
     }
   }
 
-  // CPU difficulty button (bottom-right) — press C to cycle OFF→EASY→MEDIUM→HARD→OFF
   const _cpuColors = { off:'#444', easy:'#44dd88', medium:'#ffaa00', hard:'#ff4444' };
-  const _cpuBgAlpha = { off:'rgba(40,40,40,0.60)', easy:'rgba(0,80,40,0.30)', medium:'rgba(80,50,0,0.30)', hard:'rgba(80,10,10,0.30)' };
-  const _cpuLabels = { off:'🤖 CPU: OFF', easy:'🤖 EASY', medium:'🤖 MEDIUM', hard:'🤖 HARD' };
-  const cpuBtnX = W - 116, cpuBtnY = H - 54, cpuBtnW = 108, cpuBtnH = 26;
-  ctx.fillStyle = _cpuBgAlpha[cpuDifficulty];
-  ctx.beginPath(); ctx.roundRect(cpuBtnX, cpuBtnY, cpuBtnW, cpuBtnH, 8); ctx.fill();
-  ctx.strokeStyle = _cpuColors[cpuDifficulty]; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.roundRect(cpuBtnX, cpuBtnY, cpuBtnW, cpuBtnH, 8); ctx.stroke();
-  ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = _cpuColors[cpuDifficulty];
-  ctx.fillText(_cpuLabels[cpuDifficulty] + '  [C]', cpuBtnX + cpuBtnW/2, cpuBtnY + 17);
+
+  if (cpuDifficulty !== 'off') {
+    // ── Prominent 3-button difficulty row (VS AI mode) ──
+    const diffLevels = ['easy', 'medium', 'hard'];
+    const diffLabels = ['🟢 EASY', '🟡 MEDIUM', '🔴 HARD'];
+    const diffBtnW = 130, diffBtnH = 34, diffGap = 14;
+    const diffTotalW = diffLevels.length * diffBtnW + (diffLevels.length - 1) * diffGap;
+    const diffStartX = (W - diffTotalW) / 2;
+    const diffY = H - 58;
+    ctx.font = 'bold 10px sans-serif'; ctx.fillStyle = '#555'; ctx.textAlign = 'center';
+    ctx.fillText('DIFFICULTY', W/2, diffY - 6);
+    diffLevels.forEach((lvl, i) => {
+      const bx = diffStartX + i * (diffBtnW + diffGap);
+      const active = cpuDifficulty === lvl;
+      ctx.fillStyle = active ? (lvl==='easy'?'rgba(0,120,60,0.55)' : lvl==='medium'?'rgba(120,80,0,0.55)' : 'rgba(120,20,20,0.55)') : 'rgba(20,20,30,0.70)';
+      ctx.beginPath(); ctx.roundRect(bx, diffY, diffBtnW, diffBtnH, 8); ctx.fill();
+      ctx.strokeStyle = active ? _cpuColors[lvl] : 'rgba(255,255,255,0.08)'; ctx.lineWidth = active ? 2 : 1;
+      ctx.beginPath(); ctx.roundRect(bx, diffY, diffBtnW, diffBtnH, 8); ctx.stroke();
+      ctx.fillStyle = active ? _cpuColors[lvl] : '#444';
+      ctx.font = `bold ${active ? 13 : 12}px sans-serif`; ctx.textAlign = 'center';
+      ctx.fillText(diffLabels[i], bx + diffBtnW/2, diffY + diffBtnH/2 + 5);
+    });
+  } else {
+    // ── Small C key toggle (2P mode) ──
+    const _cpuBgAlpha = { off:'rgba(40,40,40,0.60)', easy:'rgba(0,80,40,0.30)', medium:'rgba(80,50,0,0.30)', hard:'rgba(80,10,10,0.30)' };
+    const _cpuLabels = { off:'🤖 CPU: OFF', easy:'🤖 EASY', medium:'🤖 MEDIUM', hard:'🤖 HARD' };
+    const cpuBtnX = W - 116, cpuBtnY = H - 54, cpuBtnW = 108, cpuBtnH = 26;
+    ctx.fillStyle = _cpuBgAlpha[cpuDifficulty];
+    ctx.beginPath(); ctx.roundRect(cpuBtnX, cpuBtnY, cpuBtnW, cpuBtnH, 8); ctx.fill();
+    ctx.strokeStyle = _cpuColors[cpuDifficulty]; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.roundRect(cpuBtnX, cpuBtnY, cpuBtnW, cpuBtnH, 8); ctx.stroke();
+    ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = _cpuColors[cpuDifficulty];
+    ctx.fillText(_cpuLabels[cpuDifficulty] + '  [C]', cpuBtnX + cpuBtnW/2, cpuBtnY + 17);
+  }
 
   // Bottom status
   if (p1Confirmed && p2Confirmed) {
@@ -1288,7 +1317,7 @@ function drawCharSelect() {
     ctx.textAlign = 'right';
     if (cpuDifficulty !== 'off') {
       ctx.fillStyle = _cpuColors[cpuDifficulty];
-      ctx.fillText(`CPU(${cpuDifficulty.toUpperCase()})  ${CHARACTERS[p2CharIdx].name}  🤖`, W - 26, H - 22);
+      ctx.fillText(`🤖 CPU  ${CHARACTERS[p2CharIdx].name}`, W - 26, H - 22);
     } else {
       ctx.fillStyle = p2Confirmed ? '#ff4444' : '#555';
       ctx.fillText(p2Confirmed ? `P2  ${CHARACTERS[p2CharIdx].name}  ✓` : 'P2: pick a fighter', W - 26, H - 22);
@@ -1798,11 +1827,26 @@ canvas.addEventListener('click', e => {
   if (sx >= W-54 && sx <= W-18 && sy >= H-26 && sy <= H-6) { window.BGM?.toggle(); return; }
   if (sx >= W-96 && sx <= W-60 && sy >= H-26 && sy <= H-6) { _toggleFullscreen(); return; }
   if(phase==='charSelect'){
-    // CPU toggle button
-    const cpuBtnX=W-116, cpuBtnY=H-54, cpuBtnW=108, cpuBtnH=26;
-    if(sx>=cpuBtnX&&sx<=cpuBtnX+cpuBtnW&&sy>=cpuBtnY&&sy<=cpuBtnY+cpuBtnH){
-      if(!p1Confirmed&&!p2Confirmed){ _cpuCycle(); }
-      return;
+    if (cpuDifficulty !== 'off') {
+      // Difficulty row buttons
+      const diffLevels = ['easy','medium','hard'];
+      const diffBtnW=130, diffBtnH=34, diffGap=14;
+      const diffTotalW=diffLevels.length*diffBtnW+(diffLevels.length-1)*diffGap;
+      const diffStartX=(W-diffTotalW)/2, diffY=H-58;
+      for(let d=0; d<diffLevels.length; d++){
+        const bx=diffStartX+d*(diffBtnW+diffGap);
+        if(sx>=bx&&sx<=bx+diffBtnW&&sy>=diffY&&sy<=diffY+diffBtnH){
+          if(!p1Confirmed){ cpuDifficulty=diffLevels[d]; SFX.click(); }
+          return;
+        }
+      }
+    } else {
+      // Small C key CPU toggle button (2P mode only)
+      const cpuBtnX=W-116, cpuBtnY=H-54, cpuBtnW=108, cpuBtnH=26;
+      if(sx>=cpuBtnX&&sx<=cpuBtnX+cpuBtnW&&sy>=cpuBtnY&&sy<=cpuBtnY+cpuBtnH){
+        if(!p1Confirmed&&!p2Confirmed){ _cpuCycle(); }
+        return;
+      }
     }
     const CW=158,GAP=12,cardY=88,CH=285;
     const totalW=CHARACTERS.length*CW+(CHARACTERS.length-1)*GAP;
@@ -1816,6 +1860,9 @@ canvas.addEventListener('click', e => {
         } else if(cpuDifficulty === 'off'){
           if(p2CharIdx===i&&!p2Confirmed){ p2Confirmed=true; SFX.bell(); _checkBothConfirmed(); }
           else if(!p2Confirmed){ p2CharIdx=i; SFX.click(); }
+        } else {
+          // VS AI: right-side clicks navigate the CPU's character
+          if(!p1Confirmed){ p2CharIdx=i; SFX.click(); }
         }
         break;
       }
@@ -1902,6 +1949,10 @@ document.addEventListener('keydown', e=>{
       if(e.key==='ArrowLeft') { e.preventDefault(); if(!p2Confirmed){p2CharIdx=(p2CharIdx+N-1)%N;SFX.click();} return; }
       if(e.key==='ArrowRight'){ e.preventDefault(); if(!p2Confirmed){p2CharIdx=(p2CharIdx+1)%N;SFX.click();} return; }
       if(e.key==='l'||e.key==='L'){ if(!p2Confirmed){p2Confirmed=true;SFX.bell();_checkBothConfirmed();} return; }
+    } else {
+      // VS AI: ←/→ pick the CPU's character
+      if(e.key==='ArrowLeft') { e.preventDefault(); if(!p1Confirmed){p2CharIdx=(p2CharIdx+N-1)%N;SFX.click();} return; }
+      if(e.key==='ArrowRight'){ e.preventDefault(); if(!p1Confirmed){p2CharIdx=(p2CharIdx+1)%N;SFX.click();} return; }
     }
     return;
   }
