@@ -74,18 +74,26 @@ const MIN_GAP = 64;
 const PUNCH_REACH = 145;
 const KICK_REACH  = 140;
 const SUPER_REACH = 190;
-const RING_BACK_Y  = 270;
-const RING_FRONT_Y = 430;
-const RING_BACK_S  = 0.65;
-const RING_FRONT_S = 1.0;
-const RY_SPEED     = 0.012;
+const RING_BACK_Y    = 285;   // screen-Y at depth=0 (back of ring)
+const RING_FRONT_Y   = 425;   // screen-Y at depth=1 (front of ring)
+const RING_BACK_S    = 0.82;  // render scale at back (10-18% range — subtle 2.5D)
+const RING_FRONT_S   = 1.0;
+const DEPTH_SPEED    = 0.012; // depth axis movement per frame
+const DEPTH_WORLD_SCALE = 60; // depth units → world-px (unified with X for hit detection)
+const PUNCH_HIT_R  = 38;      // world-px hit radius for punch
+const KICK_HIT_R   = 46;      // world-px hit radius for kick
+const SUPER_HIT_R  = 60;      // world-px hit radius for super
 const JUMP_VZ      = -12;
 const GRAVITY      = 0.7;
 const JUMP_CD      = 30;
 
-function ryToScreenY(ry) { return RING_BACK_Y + ry * (RING_FRONT_Y - RING_BACK_Y); }
-function ryToScale(ry)   { return RING_BACK_S + ry * (RING_FRONT_S - RING_BACK_S); }
-function fighterScreenY(p) { return ryToScreenY(p.ry) - (p.jz || 0); }
+function depthToScreenY(depth) { return RING_BACK_Y + depth * (RING_FRONT_Y - RING_BACK_Y); }
+function depthToScale(depth)   { return RING_BACK_S + depth * (RING_FRONT_S - RING_BACK_S); }
+function fighterScreenY(p) { return depthToScreenY(p.depth) - (p.jz || 0); }
+// Unified world-space distance: fist at (fistX, attackerDepth) vs defender center
+function fistDist(fistX, attackerDepth, d) {
+  return Math.hypot(fistX - d.x, (attackerDepth - d.depth) * DEPTH_WORLD_SCALE);
+}
 
 // ── Game state ───────────────────────────────────────────────────────────────
 let phase = 'menu';
@@ -103,7 +111,7 @@ let shakeMag = 0;
 // ── Fighter factory ──────────────────────────────────────────────────────────
 function mkFighter(x, color, dir) {
   return {
-    x, y: 315, color, dir, ry: 0.5, jz: 0, jvz: 0, jumpCd: 0,
+    x, y: 315, color, dir, depth: 0.5, jz: 0, jvz: 0, jumpCd: 0,
     hp: MAX_HP, shield: MAX_SHIELD,
     shieldTimer: 0, vx: 0,
     punching: false, punchT: 0, punchCd: 0,
@@ -194,20 +202,16 @@ function checkPunch(a, d) {
   if (!a.punching) return;
   const t = Math.sin(a.punchT * Math.PI);
   if (t < 0.45) return;
-  const as = ryToScale(a.ry), ds = ryToScale(d.ry);
-  const rawLen = 22 + t*(PUNCH_REACH-22);
-  const clampedLen = Math.min(rawLen, (Math.abs(d.x-a.x)-10) / as);
-  if (clampedLen < 0) return;
-  const asy = fighterScreenY(a), dsy = fighterScreenY(d);
-  const scLen = clampedLen * as;
-  const fx = a.x + a.dir*scLen, fy = asy - 35*as;
-  if (Math.hypot(fx-d.x, fy-(dsy-35*ds)) < Math.max(28, 35*ds)) {
+  const rawLen = 22 + t * (PUNCH_REACH - 22);
+  const armReach = Math.min(rawLen, Math.abs(d.x - a.x) - 10);
+  if (armReach < 0) return;
+  if (fistDist(a.x + a.dir * armReach, a.depth, d) < PUNCH_HIT_R) {
     if (d.ducking) {
       a.punching=false; a.punchT=0; a.punchCd=PUNCH_CD;
-      addFloat(d.x, dsy-90, '#88ff88', 'dodge', 0, false); SFX.dodge(); return;
+      addFloat(d.x, fighterScreenY(d)-90, '#88ff88', 'dodge', 0, false); SFX.dodge(); return;
     }
-    const isTip = (scLen-22)/(PUNCH_REACH-22) > 0.85;
-    applyHit(a, d, tipDamage(scLen, PUNCH_REACH, 8, 22), 'punch', isTip);
+    const isTip = (armReach-22)/(PUNCH_REACH-22) > 0.85;
+    applyHit(a, d, tipDamage(armReach, PUNCH_REACH, 8, 22), 'punch', isTip);
     a.punching=false; a.punchT=0; a.punchCd=PUNCH_CD;
   }
 }
@@ -215,20 +219,16 @@ function checkKick(a, d) {
   if (!a.kicking) return;
   const t = Math.sin(a.kickT * Math.PI);
   if (t < 0.4) return;
-  const as = ryToScale(a.ry), ds = ryToScale(d.ry);
-  const rawLen = 30 + t*(KICK_REACH-30);
-  const clampedLen = Math.min(rawLen, (Math.abs(d.x-a.x)-10) / as);
-  if (clampedLen < 0) return;
-  const asy = fighterScreenY(a), dsy = fighterScreenY(d);
-  const scLen = clampedLen * as;
-  const lx = a.x + a.dir*scLen, ly = asy - 10*as + t*20*as;
-  if (Math.hypot(lx-d.x, ly-(dsy-20*ds)) < Math.max(32, 42*ds)) {
+  const rawLen = 30 + t * (KICK_REACH - 30);
+  const armReach = Math.min(rawLen, Math.abs(d.x - a.x) - 10);
+  if (armReach < 0) return;
+  if (fistDist(a.x + a.dir * armReach, a.depth, d) < KICK_HIT_R) {
     if (d.jz > 30) {
       a.kicking=false; a.kickT=0;
-      addFloat(d.x, dsy-90, '#88ff88', 'dodge', 0, false); SFX.dodge(); return;
+      addFloat(d.x, fighterScreenY(d)-90, '#88ff88', 'dodge', 0, false); SFX.dodge(); return;
     }
-    const isTip = (scLen-30)/(KICK_REACH-30) > 0.85;
-    applyHit(a, d, tipDamage(scLen, KICK_REACH, 16, 38), 'kick', isTip);
+    const isTip = (armReach-30)/(KICK_REACH-30) > 0.85;
+    applyHit(a, d, tipDamage(armReach, KICK_REACH, 16, 38), 'kick', isTip);
     a.kicking=false; a.kickT=0;
   }
 }
@@ -236,20 +236,16 @@ function checkSuper(a, d) {
   if (!a.supering) return;
   const t = Math.sin(a.superT * Math.PI);
   if (t < 0.35) return;
-  const as = ryToScale(a.ry), ds = ryToScale(d.ry);
-  const rawLen = 22 + t*(SUPER_REACH-22);
-  const clampedLen = Math.min(rawLen, (Math.abs(d.x-a.x)-10) / as);
-  if (clampedLen < 0) return;
-  const asy = fighterScreenY(a), dsy = fighterScreenY(d);
-  const scLen = clampedLen * as;
-  const fx = a.x + a.dir*scLen, fy = asy - 35*as;
-  if (Math.hypot(fx-d.x, fy-(dsy-35*ds)) < Math.max(40, 52*ds)) {
+  const rawLen = 22 + t * (SUPER_REACH - 22);
+  const armReach = Math.min(rawLen, Math.abs(d.x - a.x) - 10);
+  if (armReach < 0) return;
+  if (fistDist(a.x + a.dir * armReach, a.depth, d) < SUPER_HIT_R) {
     if (d.ducking) {
       a.supering=false; a.superT=0;
-      addFloat(d.x, dsy-90, '#88ff88', 'dodge', 0, false); SFX.dodge(); return;
+      addFloat(d.x, fighterScreenY(d)-90, '#88ff88', 'dodge', 0, false); SFX.dodge(); return;
     }
-    const isTip = (scLen-22)/(SUPER_REACH-22) > 0.85;
-    applyHit(a, d, tipDamage(scLen, SUPER_REACH, 55, 120), 'super', isTip);
+    const isTip = (armReach-22)/(SUPER_REACH-22) > 0.85;
+    applyHit(a, d, tipDamage(armReach, SUPER_REACH, 55, 120), 'super', isTip);
     a.supering=false; a.superT=0;
   }
 }
@@ -298,12 +294,12 @@ function update() {
 
   // Depth movement — W/ArrowUp moves toward back of ring
   if (!p1.punching && !p1.kicking && !p1.supering && p1.dashT<=0) {
-    if (inputState.p1.up) p1.ry = Math.max(0, p1.ry - RY_SPEED);
-    else p1.ry = Math.min(1, p1.ry + RY_SPEED * 0.5);
+    if (inputState.p1.up) p1.depth = Math.max(0, p1.depth - DEPTH_SPEED);
+    else p1.depth = Math.min(1, p1.depth + DEPTH_SPEED * 0.5);
   }
   if (!p2.punching && !p2.kicking && !p2.supering && p2.dashT<=0) {
-    if (inputState.p2.up) p2.ry = Math.max(0, p2.ry - RY_SPEED);
-    else p2.ry = Math.min(1, p2.ry + RY_SPEED * 0.5);
+    if (inputState.p2.up) p2.depth = Math.max(0, p2.depth - DEPTH_SPEED);
+    else p2.depth = Math.min(1, p2.depth + DEPTH_SPEED * 0.5);
   }
 
   // Jump physics
@@ -324,19 +320,18 @@ function update() {
 
   // 2D Euclidean collision — push apart along line between fighters in (x, screen-y)
   const _colDx  = p2.x - p1.x;
-  const _colDsy = ryToScreenY(p2.ry) - ryToScreenY(p1.ry);
+  const _colDsy = depthToScreenY(p2.depth) - depthToScreenY(p1.depth);
   const _colDist = Math.hypot(_colDx, _colDsy);
   if (_colDist < MIN_GAP) {
     const overlap = MIN_GAP - _colDist;
-    // When dist≈0 (exact overlap), push horizontally so there's a defined direction
-    const nx = _colDist > 0.5 ? _colDx / _colDist : 1;
+    const nx = _colDist > 0.5 ? _colDx  / _colDist : 1;
     const ny = _colDist > 0.5 ? _colDsy / _colDist : 0;
-    const pushX  = nx * overlap / 2;
-    const pushRY = (ny * overlap / 2) / (RING_FRONT_Y - RING_BACK_Y);
-    p1.x  = Math.max(70, Math.min(W-70, p1.x  - pushX));
-    p2.x  = Math.max(70, Math.min(W-70, p2.x  + pushX));
-    p1.ry = Math.max(0, Math.min(1, p1.ry - pushRY));
-    p2.ry = Math.max(0, Math.min(1, p2.ry + pushRY));
+    const pushX     = nx * overlap / 2;
+    const pushDepth = (ny * overlap / 2) / (RING_FRONT_Y - RING_BACK_Y);
+    p1.x     = Math.max(70, Math.min(W-70, p1.x     - pushX));
+    p2.x     = Math.max(70, Math.min(W-70, p2.x     + pushX));
+    p1.depth = Math.max(0,  Math.min(1,    p1.depth  - pushDepth));
+    p2.depth = Math.max(0,  Math.min(1,    p2.depth  + pushDepth));
   }
 
   p1.dir = p2.x>p1.x ?  1 : -1;
@@ -440,7 +435,7 @@ function drawCrowd() {
 }
 
 function drawFighter(p) {
-  const s    = ryToScale(p.ry);
+  const s    = depthToScale(p.depth);
   const sy   = fighterScreenY(p);
   const wobX = Math.sin(p.wobble*0.5)*10;
   const hitFlash = p.hit>0 && Math.floor(p.hit)%2===0;
@@ -527,6 +522,36 @@ function drawFighter(p) {
   ctx.strokeStyle='#883300';ctx.lineWidth=2;ctx.beginPath();
   if(p.hit>0)ctx.arc(eo,-51,7,0,Math.PI);else ctx.arc(eo,-55,5,0,Math.PI,true);ctx.stroke();
   if(p.hp<MAX_HP*0.5){ctx.fillStyle='#88ccff';ctx.beginPath();ctx.ellipse(p.dir*18,-70+Math.sin(Date.now()/200)*3,3,5,0.3,0,Math.PI*2);ctx.fill();}
+
+  // Range indicator: ground arc + hit-zone ring during attack windup
+  if (p.punching || p.kicking || p.supering) {
+    const atk_t  = p.punching ? p.punchT : (p.kicking ? p.kickT : p.superT);
+    const sin_t  = Math.sin(atk_t * Math.PI);
+    if (sin_t > 0.2) {
+      const maxR   = p.punching ? PUNCH_REACH  : (p.kicking ? KICK_REACH  : SUPER_REACH);
+      const minR   = p.punching ? 22           : (p.kicking ? 30          : 22);
+      const hitR   = (p.punching ? PUNCH_HIT_R : (p.kicking ? KICK_HIT_R : SUPER_HIT_R)) / s;
+      const reach  = Math.max(minR, Math.min(minR + sin_t*(maxR-minR), fighterGap - 10));
+      const tipX   = p.dir * reach;
+      const tipY   = p.kicking ? (-10 + sin_t*20) : -35;
+      ctx.save();
+      // Ground shadow ellipse showing reach
+      ctx.globalAlpha = 0.18 * sin_t;
+      ctx.beginPath();
+      ctx.ellipse(tipX/2, 54, Math.max(6, reach/2), Math.max(3, reach/5), 0, 0, Math.PI*2);
+      ctx.fillStyle = p.color;
+      ctx.fill();
+      // Hit-zone ring at tip
+      ctx.globalAlpha = 0.35 * sin_t;
+      ctx.beginPath();
+      ctx.arc(tipX, tipY, hitR, 0, Math.PI*2);
+      ctx.strokeStyle = p.color;
+      ctx.lineWidth = 2 / s;
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
   ctx.restore();
 }
 
@@ -673,7 +698,7 @@ function draw() {
   }
   ctx.save(); ctx.translate(shakeX,shakeY);
   drawCrowd();drawRing();
-  const sorted = [p1, p2].sort((a, b) => a.ry - b.ry);
+  const sorted = [p1, p2].sort((a, b) => a.depth - b.depth);
   drawFighter(sorted[0]); drawFighter(sorted[1]);
   drawFloaties();
   ctx.restore();
