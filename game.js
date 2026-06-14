@@ -1731,7 +1731,7 @@ function drawMenu() {
   ctx.fillStyle='rgba(0,0,0,0.92)';ctx.fillRect(0,0,W,H);
   ctx.save();ctx.textAlign='center';
   ctx.font='bold 52px sans-serif';ctx.fillStyle='#ffe44d';
-  ctx.fillText('🥊  FUNNY BOXING  🥊',W/2,120);
+  ctx.fillText('🥊  LARGUMENT  🥊',W/2,120);
   ctx.font='18px sans-serif';ctx.fillStyle='#aaa';
   ctx.fillText('Choose number of rounds',W/2,180);
   const opts=[1,3,5];
