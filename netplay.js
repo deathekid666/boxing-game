@@ -19,13 +19,159 @@
   let mySlot = null;       // 'p1' (host) | 'p2' (guest)
   let myName = '';
   let oppName = '';
+  let lastRoomCode = '';   // remembered for reconnect
 
   // Buffers updated by incoming messages; consumed in netTick each frame.
   let latestHostState = null;
   let pendingGuestInput = { left:false,right:false,duck:false,punch:false,kick:false,super:false,dash:0 };
 
+  // ── Ping / RTT ───────────────────────────────────────────────────────────────
+  let _rtt = -1;           // ms, -1 = unknown
+  let _pingInterval = null;
+  window.netRTT = () => _rtt;
+
+  function startPing() {
+    stopPing();
+    _pingInterval = setInterval(() => {
+      if (conn && mode === 'connected') conn.send({ type:'ping', ts: Date.now() });
+    }, 1000);
+  }
+  function stopPing() {
+    if (_pingInterval) { clearInterval(_pingInterval); _pingInterval = null; }
+    _rtt = -1;
+  }
+
+  // ── Reconnect state ──────────────────────────────────────────────────────────
+  let _reconnectTimer  = null;
+  let _reconnectSecsLeft = 0;
+  const RECONNECT_TIMEOUT = 15;
+
+  function startReconnect(reason) {
+    _reconnectSecsLeft = RECONNECT_TIMEOUT;
+    showReconnectOverlay(reason, _reconnectSecsLeft);
+    if (_reconnectTimer) clearInterval(_reconnectTimer);
+    _reconnectTimer = setInterval(() => {
+      _reconnectSecsLeft--;
+      updateReconnectCountdown(_reconnectSecsLeft);
+      if (_reconnectSecsLeft <= 0) {
+        clearInterval(_reconnectTimer); _reconnectTimer = null;
+        failReconnect();
+      } else if (mySlot === 'p2' && lastRoomCode) {
+        // Guest: attempt re-connection every ~3s
+        if (_reconnectSecsLeft % 3 === 0) tryGuestReconnect();
+      }
+      // Host just waits — peer is still alive and listening
+    }, 1000);
+  }
+
+  function tryGuestReconnect() {
+    if (mode === 'connected') return;
+    try {
+      const c = peer ? peer.connect(PREFIX + lastRoomCode, { reliable: true, serialization: 'json' }) : null;
+      if (!c) return;
+      c.on('open', () => {
+        clearInterval(_reconnectTimer); _reconnectTimer = null;
+        setupConn(c);
+        hideReconnectOverlay();
+      });
+      c.on('error', () => {}); // silently ignore failed attempts
+    } catch (_) {}
+  }
+
+  function failReconnect() {
+    hideReconnectOverlay();
+    showDisconnectOverlay('Could not reconnect after ' + RECONNECT_TIMEOUT + 's.');
+    // Award win to the connected player (only record for P1 locally)
+    if (mySlot === 'p1') {
+      const p1Name = (window.playerNames?.p1 || '').trim();
+      if (p1Name && p1Name !== 'P1') {
+        window.Leaderboard?.recordMatchResult({
+          playerName: p1Name, won: true, kos: 0, bestCombo: 0, damage: 0,
+          opponent: (window.playerNames?.p2 || '').trim() || null,
+        });
+      }
+    }
+  }
+
+  // ── Matchmaking state ────────────────────────────────────────────────────────
+  let _mmPollInterval = null;
+  let _mmTimeoutTimer = null;
+  let _mmSecsLeft = 0;
+  const MM_TIMEOUT = 30;
+  let _mmRoomCode = '';
+
+  function startMatchmaking() {
+    _mmRoomCode = genCode();
+    _mmSecsLeft = MM_TIMEOUT;
+    showScreen('matchmaking');
+    setMMStatus('Searching for opponent… (' + _mmSecsLeft + 's)');
+
+    // Ensure we have auth before entering queue
+    const enterAndPoll = () => {
+      window.Leaderboard?.enterQueue({ playerName: myName, roomCode: _mmRoomCode })
+        .then(() => {
+          _mmPollInterval = setInterval(pollMatchmaking, 2000);
+          _mmTimeoutTimer = setInterval(() => {
+            _mmSecsLeft--;
+            setMMStatus('Searching for opponent… (' + _mmSecsLeft + 's)');
+            if (_mmSecsLeft <= 0) cancelMatchmaking('No opponent found — try again.');
+          }, 1000);
+        });
+    };
+
+    if (window.Leaderboard?.uid) { enterAndPoll(); }
+    else {
+      setMMStatus('Connecting to server…');
+      setTimeout(() => {
+        if (window.Leaderboard?.uid) enterAndPoll();
+        else setMMStatus('⚠ Server unavailable. Try Host/Join instead.');
+      }, 2000);
+    }
+  }
+
+  function pollMatchmaking() {
+    window.Leaderboard?.pollForMatch().then(match => {
+      if (!match) return;
+      clearMM();
+      if (match.isHost) {
+        // I am host — create PeerJS host with my pre-generated room code
+        mySlot = 'p1';
+        window.localPlayer = 'p1';
+        window.playerNames.p1 = myName;
+        oppName = match.opponentName;
+        window.playerNames.p2 = oppName;
+        setStatus('Found opponent: <strong>' + esc(match.opponentName) + '</strong> — connecting…');
+        showScreen('hosting');
+        setRoomCode(_mmRoomCode);
+        hostGameWithCode(_mmRoomCode);
+      } else {
+        // I am guest — connect to opponent's room code
+        mySlot = 'p2';
+        window.localPlayer = 'p2';
+        window.playerNames.p2 = myName;
+        oppName = match.opponentName;
+        setStatus('Found opponent: <strong>' + esc(match.opponentName) + '</strong> — connecting…');
+        showScreen('connecting');
+        joinGame(match.roomCode);
+      }
+      // Leave queue after matching
+      window.Leaderboard?.leaveQueue();
+    });
+  }
+
+  function clearMM() {
+    if (_mmPollInterval) { clearInterval(_mmPollInterval); _mmPollInterval = null; }
+    if (_mmTimeoutTimer) { clearInterval(_mmTimeoutTimer); _mmTimeoutTimer = null; }
+  }
+
+  function cancelMatchmaking(msg) {
+    clearMM();
+    window.Leaderboard?.leaveQueue();
+    showScreen('mode');
+    if (msg) setStatus(msg);
+  }
+
   // ── Netplay hooks ────────────────────────────────────────────────────────────
-  // Guest skips local update() entirely — host state drives everything.
   window.netHooks.skipUpdate   = () => mySlot === 'p2' && mode === 'connected';
   window.netHooks.canEndRound  = () => mySlot !== 'p2';
   window.netHooks.canStartNext = () => mySlot !== 'p2';
@@ -55,7 +201,6 @@
     const ph = window.Game?.phase;
 
     if (mySlot === 'p1') {
-      // Apply latest guest inputs to p2's inputState slot
       const gi = pendingGuestInput;
       inputState.p2.left  = gi.left;
       inputState.p2.right = gi.right;
@@ -65,18 +210,15 @@
       inputState.p2.super = gi.super;
       if (gi.dash !== 0) { inputState.p2.dash = gi.dash; pendingGuestInput.dash = 0; }
 
-      // Send authoritative state to guest every frame during active gameplay
       if (ph === 'fight' || ph === 'roundEnd') {
         const s = window.Game.getState();
         if (s) conn.send({ type:'state', state:s });
       }
     } else {
-      // Apply latest state snapshot received from host
       if (latestHostState) {
         window.Game.applyState(latestHostState);
         latestHostState = null;
       }
-      // Send our current inputs to host
       const inp = inputState.p2;
       conn.send({ type:'input', state:{
         left:inp.left, right:inp.right, duck:inp.duck,
@@ -88,7 +230,6 @@
   // ── Incoming message handler ─────────────────────────────────────────────────
   function handleData(msg) {
     switch (msg.type) {
-
       case 'hello':
         oppName = msg.name || (mySlot === 'p1' ? 'Guest' : 'Host');
         window.playerNames[mySlot === 'p1' ? 'p2' : 'p1'] = oppName;
@@ -126,11 +267,21 @@
 
       case 'returnMenu':
         window.Game.phase = 'menu';
+        hideReconnectOverlay();
         hideDisconnectOverlay();
         break;
 
       case 'rematchRequest':
         window.Game.oppRematch();
+        break;
+
+      case 'ping':
+        if (conn) conn.send({ type:'pong', ts: msg.ts });
+        break;
+
+      case 'pong':
+        _rtt = Date.now() - msg.ts;
+        updatePingDisplay();
         break;
     }
   }
@@ -141,7 +292,6 @@
 
     conn.on('open', () => {
       mode = 'connected';
-      // Both sides immediately announce their name
       conn.send({ type:'hello', name:myName });
       window.playerNames[mySlot] = myName;
       setStatus(mySlot === 'p1'
@@ -149,6 +299,7 @@
         : 'Connected — waiting for host to start…');
       showScreen('connected');
       updateConnectedInfo();
+      startPing();
     });
 
     conn.on('data', handleData);
@@ -170,24 +321,27 @@
   function onDisconnect(reason) {
     const wasInFight = window.Game?.phase === 'fight' || window.Game?.phase === 'roundEnd';
     conn = null;
+    stopPing();
     pendingGuestInput = { left:false,right:false,duck:false,punch:false,kick:false,super:false,dash:0 };
     latestHostState = null;
 
     if (wasInFight) {
-      showDisconnectOverlay(reason);
+      startReconnect(reason);
     } else {
       if (window.Game) window.Game.phase = 'menu';
     }
 
     if (mySlot === 'p1') {
-      // Host keeps peer alive so room stays open for reconnect
       mode = 'hosting';
       setStatus('Opponent disconnected — room still open.');
-      showScreen('hosting');
+      if (!wasInFight) showScreen('hosting');
     } else {
-      cleanupGuest();
-      setStatus(reason || 'Disconnected.');
-      showScreen('mode');
+      if (!wasInFight) {
+        cleanupGuest();
+        setStatus(reason || 'Disconnected.');
+        showScreen('mode');
+      }
+      // If in fight, keep peer alive for reconnect attempt
     }
   }
 
@@ -199,35 +353,29 @@
     window.localPlayer = window.isTouch ? 'p1' : 'both';
     pendingGuestInput = { left:false,right:false,duck:false,punch:false,kick:false,super:false,dash:0 };
     latestHostState = null;
+    stopPing();
     oppName = '';
     window.playerNames.p1 = 'P1';
     window.playerNames.p2 = 'P2';
   }
 
   function fullTeardown() {
+    clearMM();
     if (conn) { try { conn.close(); } catch(_) {} conn = null; }
     if (peer) { try { peer.destroy(); } catch(_) {} peer = null; }
     mode = 'offline'; mySlot = null;
     window.localPlayer = window.isTouch ? 'p1' : 'both';
     pendingGuestInput = { left:false,right:false,duck:false,punch:false,kick:false,super:false,dash:0 };
     latestHostState = null;
+    stopPing();
     oppName = '';
     window.playerNames.p1 = myName || 'P1';
     window.playerNames.p2 = 'P2';
   }
 
   // ── Host ─────────────────────────────────────────────────────────────────────
-  function hostGame() {
-    fullTeardown();
-    mySlot = 'p1';
-    window.localPlayer = 'p1';
-    window.playerNames.p1 = myName;
-
-    const code = genCode();
-    showScreen('hosting');
-    setRoomCode(code);
-    setStatus('Creating room…');
-
+  function hostGameWithCode(code) {
+    lastRoomCode = code;
     peer = new Peer(PREFIX + code, { debug: 0 });
 
     peer.on('open', () => {
@@ -236,8 +384,13 @@
     });
 
     peer.on('connection', c => {
-      if (conn) { c.close(); return; } // already have a guest
+      if (conn) { c.close(); return; }
       mode = 'connecting';
+      // If reconnecting: handle as reconnect
+      if (_reconnectTimer) {
+        clearInterval(_reconnectTimer); _reconnectTimer = null;
+        hideReconnectOverlay();
+      }
       setupConn(c);
     });
 
@@ -248,20 +401,38 @@
     });
   }
 
+  function hostGame() {
+    fullTeardown();
+    mySlot = 'p1';
+    window.localPlayer = 'p1';
+    window.playerNames.p1 = myName;
+
+    const code = genCode();
+    showScreen('hosting');
+    setRoomCode(code);
+    setStatus('Creating room…');
+    hostGameWithCode(code);
+  }
+
   // ── Join ─────────────────────────────────────────────────────────────────────
   function joinGame(code) {
     const cleaned = code.trim().toUpperCase();
     if (!cleaned) return;
-    fullTeardown();
-    mySlot = 'p2';
-    window.localPlayer = 'p2';
-    window.playerNames.p2 = myName;
-    mode = 'connecting';
-    showScreen('connecting');
-    setStatus('Connecting to room ' + cleaned + '…');
-    setError('');
+    lastRoomCode = cleaned;
 
-    peer = new Peer({ debug: 0 });
+    if (!peer || mode === 'offline') {
+      // Fresh join (not a reconnect)
+      fullTeardown();
+      mySlot = 'p2';
+      window.localPlayer = 'p2';
+      window.playerNames.p2 = myName;
+      mode = 'connecting';
+      showScreen('connecting');
+      setStatus('Connecting to room ' + cleaned + '…');
+      setError('');
+    }
+
+    if (!peer) peer = new Peer({ debug: 0 });
 
     let joinTimeout = null;
 
@@ -280,6 +451,16 @@
       setupConn(c);
     });
 
+    if (peer.id) {
+      // peer already open (reconnect case)
+      const c = peer.connect(PREFIX + cleaned, { reliable: true, serialization: 'json' });
+      joinTimeout = setTimeout(() => {
+        if (mode !== 'connected') cleanupGuest();
+      }, 5000);
+      c.on('open', () => { clearTimeout(joinTimeout); joinTimeout = null; });
+      setupConn(c);
+    }
+
     peer.on('error', e => {
       clearTimeout(joinTimeout);
       const msg = (e && e.message) || String(e);
@@ -289,28 +470,63 @@
     });
   }
 
-  // ── Disconnect overlay (shown when connection drops mid-match) ────────────────
+  // ── Reconnect overlay ─────────────────────────────────────────────────────────
+  function buildReconnectOverlay() {
+    const el = document.createElement('div');
+    el.id = 'net-reconnecting';
+    Object.assign(el.style, {
+      display: 'none', position: 'fixed', inset: '0',
+      background: 'rgba(0,0,0,0.82)', zIndex: '501',
+      alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '14px',
+    });
+    el.innerHTML =
+      '<div style="font-size:44px">📶</div>' +
+      '<div style="color:#fff;font-size:20px;font-weight:bold;font-family:sans-serif">Reconnecting…</div>' +
+      '<div id="net-recon-reason" style="color:#aaa;font-size:13px;font-family:sans-serif"></div>' +
+      '<div id="net-recon-count" style="color:#ffe44d;font-size:28px;font-weight:bold;font-family:monospace">15</div>' +
+      '<button id="net-recon-give-up" style="margin-top:6px;padding:10px 24px;border:none;border-radius:10px;background:#333;color:#aaa;font-size:13px;cursor:pointer">Give up</button>';
+    document.body.appendChild(el);
+    document.getElementById('net-recon-give-up').addEventListener('click', () => {
+      if (_reconnectTimer) { clearInterval(_reconnectTimer); _reconnectTimer = null; }
+      hideReconnectOverlay();
+      showDisconnectOverlay('Disconnected.');
+    });
+  }
+
+  function showReconnectOverlay(reason, secs) {
+    const el = document.getElementById('net-reconnecting');
+    if (!el) return;
+    el.style.display = 'flex';
+    const r = document.getElementById('net-recon-reason');
+    if (r) r.textContent = reason || '';
+    updateReconnectCountdown(secs);
+  }
+
+  function updateReconnectCountdown(secs) {
+    const c = document.getElementById('net-recon-count');
+    if (c) c.textContent = String(Math.max(0, secs));
+  }
+
+  function hideReconnectOverlay() {
+    const el = document.getElementById('net-reconnecting');
+    if (el) el.style.display = 'none';
+  }
+
+  // ── Disconnect overlay ────────────────────────────────────────────────────────
   function buildDisconnectOverlay() {
     const el = document.createElement('div');
     el.id = 'net-disconnected';
     Object.assign(el.style, {
-      display: 'none',
-      position: 'fixed',
-      inset: '0',
-      background: 'rgba(0,0,0,0.82)',
-      zIndex: '500',
-      alignItems: 'center',
-      justifyContent: 'center',
-      flexDirection: 'column',
-      gap: '14px',
+      display: 'none', position: 'fixed', inset: '0',
+      background: 'rgba(0,0,0,0.82)', zIndex: '500',
+      alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '14px',
     });
     el.innerHTML =
-      '<div style="font-size:44px">📶</div>' +
+      '<div style="font-size:44px">❌</div>' +
       '<div style="color:#fff;font-size:22px;font-weight:bold;font-family:sans-serif">Connection Lost</div>' +
       '<div id="net-disc-reason" style="color:#aaa;font-size:14px;font-family:sans-serif"></div>' +
       '<button id="net-disc-menu" style="margin-top:10px;padding:12px 30px;border:none;border-radius:10px;background:#ffe44d;color:#111;font-size:15px;font-weight:bold;cursor:pointer">Return to Menu</button>';
     document.body.appendChild(el);
-
     document.getElementById('net-disc-menu').addEventListener('click', () => {
       hideDisconnectOverlay();
       if (window.Game) window.Game.phase = 'menu';
@@ -334,29 +550,21 @@
   }
 
   // ── Panel UI ─────────────────────────────────────────────────────────────────
-  let panel, statusEl, errorEl, codeValueEl, joinInputEl, connInfoEl;
+  let panel, statusEl, errorEl, codeValueEl, joinInputEl, connInfoEl, mmStatusEl, pingEl;
   let currentScreen = 'name';
 
   function buildPanel() {
+    buildReconnectOverlay();
     buildDisconnectOverlay();
 
     panel = document.createElement('div');
     panel.id = 'netplay-panel';
     Object.assign(panel.style, {
-      position: 'fixed',
-      top: '10px', right: '10px',
-      zIndex: '400',
-      background: 'rgba(6,6,18,0.94)',
-      border: '1px solid rgba(255,255,255,0.09)',
-      borderRadius: '14px',
-      padding: '14px 16px',
-      color: '#ccc',
-      fontFamily: 'sans-serif',
-      fontSize: '13px',
-      width: '220px',
-      userSelect: 'none',
-      display: 'none',
-      boxSizing: 'border-box',
+      position: 'fixed', top: '10px', right: '10px', zIndex: '400',
+      background: 'rgba(6,6,18,0.94)', border: '1px solid rgba(255,255,255,0.09)',
+      borderRadius: '14px', padding: '14px 16px', color: '#ccc',
+      fontFamily: 'sans-serif', fontSize: '13px', width: '220px',
+      userSelect: 'none', display: 'none', boxSizing: 'border-box',
     });
 
     panel.innerHTML =
@@ -372,11 +580,22 @@
       // ── mode screen ──
       '<div class="np-screen" id="np-mode" style="display:none">' +
         '<div id="np-player-tag" style="font-size:11px;color:#666;margin-bottom:10px;text-align:center"></div>' +
+        '<button id="np-quick-btn" style="' + bCSS('#22aa44','#fff') + '">⚡ Quick Match</button>' +
+        '<div style="margin:7px 0;text-align:center;color:#383848;font-size:11px">— or manual —</div>' +
         '<button id="np-host-btn" style="' + bCSS('#ffe44d','#111') + '">🎮 Host Game</button>' +
-        '<div style="margin:7px 0;text-align:center;color:#383848;font-size:11px">— or —</div>' +
+        '<div style="margin:4px 0;text-align:center;color:#383848;font-size:11px">—</div>' +
         '<button id="np-join-btn" style="' + bCSS('#3a6ecc','#fff') + '">🔗 Join Game</button>' +
-        '<div style="margin:7px 0;text-align:center;color:#383848;font-size:11px">— or —</div>' +
+        '<div style="margin:4px 0;text-align:center;color:#383848;font-size:11px">—</div>' +
         '<button id="np-ai-btn" style="' + bCSS('#1a3a1a','#44bb66') + '">🤖 Practice vs AI</button>' +
+      '</div>' +
+
+      // ── matchmaking screen ──
+      '<div class="np-screen" id="np-matchmaking" style="display:none">' +
+        '<div style="text-align:center;padding:8px 0">' +
+          '<div style="font-size:28px;animation:spin 1.5s linear infinite">⚡</div>' +
+          '<div id="np-mm-status" style="font-size:11px;color:#aaa;margin-top:8px;line-height:1.5"></div>' +
+        '</div>' +
+        '<button id="np-mm-cancel" style="' + bCSS('#18182a','#666') + '">✕ Cancel</button>' +
       '</div>' +
 
       // ── AI difficulty screen ──
@@ -415,6 +634,7 @@
       // ── connected screen ──
       '<div class="np-screen" id="np-connected" style="display:none">' +
         '<div id="np-conn-info" style="font-size:12px;color:#88ee88;margin-bottom:6px;line-height:1.5"></div>' +
+        '<div id="np-ping-info" style="font-size:11px;color:#666;margin-bottom:6px"></div>' +
         '<button id="np-disconnect" style="' + bCSS('#18182a','#666') + '">Disconnect</button>' +
       '</div>' +
 
@@ -427,7 +647,9 @@
     codeValueEl = panel.querySelector('#np-code-val');
     joinInputEl = panel.querySelector('#np-join-input');
     connInfoEl  = panel.querySelector('#np-conn-info');
+    pingEl      = panel.querySelector('#np-ping-info');
     errorEl     = panel.querySelector('#np-join-err');
+    mmStatusEl  = panel.querySelector('#np-mm-status');
 
     // ── Wire buttons ─────────────────────────────────────────────────────────
     const nameInput = panel.querySelector('#np-name-input');
@@ -442,10 +664,10 @@
     });
     nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') panel.querySelector('#np-name-ok').click(); });
 
+    panel.querySelector('#np-quick-btn').addEventListener('click', startMatchmaking);
+    panel.querySelector('#np-mm-cancel').addEventListener('click', () => cancelMatchmaking(''));
     panel.querySelector('#np-host-btn').addEventListener('click', hostGame);
-
     panel.querySelector('#np-join-btn').addEventListener('click', () => showScreen('join'));
-
     panel.querySelector('#np-ai-btn').addEventListener('click', () => showScreen('ai'));
 
     panel.querySelector('#np-ai-easy').addEventListener('click', () => { panel.style.display='none'; window.Game.startVsAI('easy'); });
@@ -473,7 +695,15 @@
       const code = joinInputEl.value.trim().toUpperCase();
       if (!code) return;
       setError('');
-      joinGame(code);
+      const cleaned = code;
+      fullTeardown();
+      mySlot = 'p2';
+      window.localPlayer = 'p2';
+      window.playerNames.p2 = myName;
+      mode = 'connecting';
+      showScreen('connecting');
+      setStatus('Connecting to room ' + cleaned + '…');
+      joinGame(cleaned);
     });
     joinInputEl.addEventListener('keydown', e => {
       if (e.key === 'Enter') panel.querySelector('#np-join-ok').click();
@@ -508,6 +738,22 @@
   function setStatus(html) { if (statusEl) statusEl.innerHTML = html; }
   function setError(html)  { if (errorEl)  errorEl.innerHTML  = html; }
   function setRoomCode(code) { if (codeValueEl) codeValueEl.textContent = code; }
+  function setMMStatus(txt) { if (mmStatusEl) mmStatusEl.textContent = txt; }
+
+  function updatePingDisplay() {
+    if (!pingEl) return;
+    if (_rtt < 0) { pingEl.textContent = ''; return; }
+    const col = _rtt < 80 ? '#44ee66' : _rtt < 150 ? '#eeee44' : '#ee4444';
+    const dot = _rtt < 80 ? '🟢' : _rtt < 150 ? '🟡' : '🔴';
+    pingEl.innerHTML = dot + ' <span style="color:' + col + '">' + _rtt + ' ms</span>';
+    // Poor connection warning
+    if (_rtt > 300) {
+      if (!pingEl._warnShown) {
+        pingEl._warnShown = true;
+        pingEl._warnTimeout = setTimeout(() => { pingEl._warnShown = false; }, 3000);
+      }
+    }
+  }
 
   function updateConnectedInfo() {
     if (!connInfoEl) return;

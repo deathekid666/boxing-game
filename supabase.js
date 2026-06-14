@@ -143,6 +143,69 @@
       }
     },
 
+    // ── Matchmaking ──────────────────────────────────────────────────────────
+    async enterQueue({ playerName, roomCode }) {
+      if (!_uid) return null;
+      try {
+        // Clean up stale entries first
+        await fetch(SB_URL + '/rest/v1/rpc/cleanup_queue', {
+          method: 'POST', headers: { ..._authHeaders(), 'Prefer': 'return=minimal' },
+          body: JSON.stringify({}),
+        }).catch(() => {});
+        // Remove any previous entry for this uid
+        await this.leaveQueue();
+        // Insert fresh entry
+        await _post('/rest/v1/matchmaking_queue',
+          { player_uid: _uid, player_name: (playerName || '').slice(0, 32), room_code: roomCode, status: 'waiting' },
+          { 'Prefer': 'return=minimal' }
+        );
+        return { uid: _uid, roomCode };
+      } catch (e) {
+        console.warn('[Matchmaking] enterQueue failed:', e.message);
+        return null;
+      }
+    },
+
+    async leaveQueue() {
+      if (!_uid) return;
+      try {
+        await fetch(SB_URL + '/rest/v1/matchmaking_queue?player_uid=eq.' + _uid, {
+          method: 'DELETE',
+          headers: { ..._authHeaders(), 'Prefer': 'return=minimal' },
+        });
+      } catch (e) {
+        console.warn('[Matchmaking] leaveQueue failed:', e.message);
+      }
+    },
+
+    // Returns { isHost, roomCode, opponentName } or null if no match yet
+    async pollForMatch(myCreatedAt) {
+      if (!_uid) return null;
+      try {
+        const r = await fetch(
+          SB_URL + '/rest/v1/matchmaking_queue?status=eq.waiting&order=created_at.asc&limit=5',
+          { method: 'GET', headers: _authHeaders() }
+        );
+        if (!r.ok) return null;
+        const rows = await r.json();
+        // Find an opponent (not self)
+        const opponent = rows.find(row => row.player_uid !== _uid);
+        if (!opponent) return null;
+        // Earlier timestamp = host
+        const myEntry = rows.find(row => row.player_uid === _uid);
+        if (!myEntry) return null;
+        const iAmHost = new Date(myEntry.created_at) <= new Date(opponent.created_at);
+        return {
+          isHost: iAmHost,
+          roomCode: iAmHost ? myEntry.room_code : opponent.room_code,
+          opponentName: opponent.player_name || 'Opponent',
+        };
+      } catch (e) {
+        console.warn('[Matchmaking] pollForMatch failed:', e.message);
+        return null;
+      }
+    },
+
     // Legacy aliases kept for any existing callers
     async submit(args)     { return this.recordMatchResult(args); },
     async fetchTop(limit)  { return this.getLeaderboard(limit); },

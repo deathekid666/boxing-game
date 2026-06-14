@@ -1560,6 +1560,26 @@ function drawHUD() {
   ctx.beginPath(); ctx.roundRect(W-96, H-26, 36, 20, 6); ctx.fill();
   ctx.fillStyle = '#aaa';
   ctx.fillText(isFS ? '⛶' : '⛶', W-78, H-13);
+
+  // Ping indicator — bottom-center, only when online
+  if (window.netIsOnline?.()) {
+    const rtt = window.netRTT?.() ?? -1;
+    if (rtt >= 0) {
+      const col  = rtt < 80 ? '#44ee66' : rtt < 150 ? '#eeee44' : '#ee4444';
+      const dot  = rtt < 80 ? '🟢' : rtt < 150 ? '🟡' : '🔴';
+      ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(0,0,0,0.50)';
+      ctx.beginPath(); ctx.roundRect(W/2-28, H-22, 56, 16, 4); ctx.fill();
+      ctx.fillStyle = col;
+      ctx.fillText(dot + ' ' + rtt + 'ms', W/2, H-11);
+      // Poor connection warning
+      if (rtt > 300) {
+        ctx.font = 'bold 11px sans-serif'; ctx.fillStyle = '#ff4444';
+        ctx.fillText('⚠ Poor Connection', W/2, H-32);
+      }
+    }
+  }
+
   ctx.restore();
   ctx.textAlign='left';
 }
