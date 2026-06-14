@@ -128,6 +128,22 @@ const KD_INVUL     = 45;   // knockdown-immunity frames after rising (still hitt
 const KD_MIN_DMG   = 14;   // min post-shield damage on a tip-hit to trigger knockdown
 const SHIELD_BREAK_STUN = 20; // frames of shield-broken vulnerability
 const COMBO_WINDOW = 110;  // frames to land the next hit before combo resets (~1.8 s)
+// ── Stamina ────────────────────────────────────────────────────────────────────
+const MAX_STAMINA      = 100;
+const STAMINA_REGEN    = 0.5;  // per frame when not attacking
+const STAMINA_PUNCH    = 8;
+const STAMINA_KICK     = 15;
+const STAMINA_SUPER    = 30;
+const STAMINA_DASH     = 10;
+const STAMINA_UPPERCUT = 20;
+const STAMINA_SWEEP    = 25;
+const STAMINA_GRAB     = 20;
+// ── New attacks ────────────────────────────────────────────────────────────────
+const GRAB_HOLD_FRAMES = 25;   // idle frames holding punch to trigger grab
+const GRAB_RANGE       = 95;   // max X-dist for grab/sweep to connect
+const UPPERCUT_CD      = 90;
+const SWEEP_CD         = 90;
+const GRAB_CD          = 120;
 
 function depthToScreenY(depth) { return RING_BACK_Y + depth * (RING_FRONT_Y - RING_BACK_Y); }
 function depthToScale(depth)   { return RING_BACK_S + depth * (RING_FRONT_S - RING_BACK_S); }
@@ -398,7 +414,13 @@ function mkFighter(x, char, dir) {
     supering: false, superT: 0, superCd: 0, superHit: false,
     wobble: 0, hit: 0, superFlash: 0,
     dashT: 0, dashCd: 0, dashDir: 0,
-    ducking: false
+    ducking: false,
+    // Phase 3: stamina
+    stamina: MAX_STAMINA, staminaFlash: 0,
+    // Phase 3: new attacks
+    uppercutting: false, uppercutT: 0, uppercutCd: 0,
+    sweeping: false, sweepT: 0, sweepCd: 0,
+    grabbing: false, grabT: 0, grabCd: 0, grabHoldT: 0,
   };
 }
 
@@ -518,7 +540,9 @@ function addFloat(x, y, col, type, dmg, isTip) {
 
 // ── Hit application ───────────────────────────────────────────────────────────
 function applyHit(attacker, defender, dmg, type, isTip) {
-  let d = dmg * (attacker.dmgMul ?? 1.0);
+  // Combo multiplier: 1x → 1.1x → 1.2x → 1.3x
+  const comboMul = attacker.combo >= 4 ? 1.3 : attacker.combo >= 3 ? 1.2 : attacker.combo >= 2 ? 1.1 : 1.0;
+  let d = dmg * (attacker.dmgMul ?? 1.0) * comboMul;
 
   // Shield-broken: 25% bonus damage, no absorption, until stun expires
   let justBrokeShield = false;
@@ -560,15 +584,25 @@ function applyHit(attacker, defender, dmg, type, isTip) {
   if (type === 'super') {
     defender.vx = attacker.dir * 18;
     floaties.push({ x: defender.x, y: fighterScreenY(defender)-70, vx:(Math.random()-0.5)*3, vy:-3.5, t:0, col:'#ffee00', size:44, txt:'★', star:true });
+  } else if (type === 'grab') {
+    // Throw to opposite side — teleport past attacker
+    defender.vx = attacker.dir * 22;
+    floaties.push({ x: defender.x, y: fighterScreenY(defender)-90, vx:0, vy:-2, t:0, col:'#ffaa00', size:26, txt:'THROWN!' });
+  } else if (type === 'uppercut') {
+    defender.vx = attacker.dir * 3;
+    floaties.push({ x: defender.x, y: fighterScreenY(defender)-110, vx:0, vy:-2, t:0, col:'#ffffff', size:26, txt:'UPPERCUT!' });
+  } else if (type === 'sweep') {
+    defender.vx = attacker.dir * 3;
+    floaties.push({ x: defender.x, y: fighterScreenY(defender)-90, vx:0, vy:-1.5, t:0, col:'#ff8800', size:26, txt:'SWEPT!' });
   } else {
     defender.vx = attacker.dir * (type==='kick' ? 5 : 4);
   }
-  hitStop  = type==='super' ? 18 : (isTip ? 9 : 5);
-  shakeMag = type==='super' ? 22 : (isTip ? 11 : 4);
-  shakeT   = type==='super' ? 32 : (isTip ? 18 : 12);
+  hitStop  = type==='super' ? 18 : type==='grab' ? 12 : (isTip ? 9 : 5);
+  shakeMag = type==='super' ? 22 : type==='grab' ? 16 : (isTip ? 11 : 4);
+  shakeT   = type==='super' ? 32 : type==='grab' ? 22 : (isTip ? 18 : 12);
 
-  if (type==='super') { SFX.superHit(); if (attacker === p1) _mSuperLanded = true; navigator.vibrate?.(200); }
-  else if (type==='kick') { SFX.kick(); navigator.vibrate?.(50); }
+  if (type==='super')    { SFX.superHit(); if (attacker === p1) _mSuperLanded = true; navigator.vibrate?.(200); }
+  else if (type==='kick'||type==='sweep') { SFX.kick(); navigator.vibrate?.(50); }
   else { SFX.punch(); navigator.vibrate?.(30); }
   if (attacker.combo >= 3) SFX.impact(attacker.combo);
 
@@ -637,6 +671,55 @@ function checkSuper(a, d) {
     a.superHit = true;
     a.supering=false; a.superT=0;
   }
+}
+
+function checkUppercut(a, d) {
+  if (!a.uppercutting || d.knockdownInvul > 0) return;
+  const t = Math.sin(a.uppercutT * Math.PI);
+  if (t < 0.4) return;
+  const armReach = Math.min(22 + t * 80, Math.abs(d.x - a.x) - 10);
+  if (armReach < 0) return;
+  if (fistDist(a.x + a.dir * armReach, a.depth, d) < PUNCH_HIT_R + 10) {
+    if (d.ducking) { a.uppercutting=false; a.uppercutT=0; SFX.dodge(); return; }
+    // Launch airborne
+    d.jvz = JUMP_VZ * 1.25;
+    d.jz  = Math.max(d.jz, 1);
+    applyHit(a, d, 28 + Math.random()*14, 'uppercut', false);
+    a.uppercutting=false; a.uppercutT=0;
+  }
+}
+function checkSweep(a, d) {
+  if (!a.sweeping || d.knockdownInvul > 0) return;
+  const t = Math.sin(a.sweepT * Math.PI);
+  if (t < 0.35) return;
+  const armReach = Math.min(20 + t * (GRAB_RANGE - 20), Math.abs(d.x - a.x) - 10);
+  if (armReach < 0) return;
+  if (fistDist(a.x + a.dir * armReach, a.depth, d) < KICK_HIT_R) {
+    applyHit(a, d, 18 + Math.random()*8, 'sweep', false);
+    // Force knockdown regardless of damage
+    if (!d.knockdown && d.knockdownInvul <= 0) {
+      d.knockdown = true; d.knockdownT = 0; d.knockdowns++;
+      d.punching = false; d.kicking = false; d.supering = false; d.dashT = 0;
+    }
+    a.sweeping=false; a.sweepT=0;
+  }
+}
+function checkGrab(a, d) {
+  if (!a.grabbing || d.knockdownInvul > 0) return;
+  // Grab fires mid-animation around t=0.45
+  if (a.grabT < 0.42 || a.grabT > 0.55) return;
+  const gap = Math.abs(d.x - a.x);
+  if (gap > GRAB_RANGE * 1.2) return;
+  // Throw: push opponent to far side, bypass shield
+  const savedShield = d.shield; const savedBroken = d.shieldBroken;
+  d.shield = 0; d.shieldBroken = true;
+  applyHit(a, d, 24 + Math.random()*10, 'grab', false);
+  d.shield = savedShield; d.shieldBroken = savedBroken;
+  // Reposition thrown fighter past attacker
+  const throwDist = 130;
+  d.x = Math.max(70, Math.min(W-70, a.x + a.dir * throwDist));
+  d.vx = a.dir * 8;
+  a.grabbing=false; a.grabT=0;
 }
 
 // ── CPU AI ────────────────────────────────────────────────────────────────────
@@ -757,16 +840,16 @@ function update() {
   if (hitStop > 0) { hitStop--; return; }
   if (shakeT > 0) shakeT--;
 
-  const canAct = p => !p.punching && !p.kicking && !p.supering && !p.knockdown;
+  const canAct = p => !p.punching && !p.kicking && !p.supering && !p.uppercutting && !p.sweeping && !p.grabbing && !p.knockdown;
   if (p1.knockdown) { p1.vx = 0; p1.dashT = 0; inputState.p1.dash = 0; }
   if (p2.knockdown) { p2.vx = 0; p2.dashT = 0; inputState.p2.dash = 0; }
 
   // dash trigger — consume the one-shot dash signal from inputState
-  if (inputState.p1.dash !== 0 && p1.dashCd<=0 && p1.dashT<=0 && canAct(p1)) {
-    p1.dashT=DASH_FRAMES; p1.dashDir=inputState.p1.dash; p1.dashCd=DASH_CD; SFX.dash();
+  if (inputState.p1.dash !== 0 && p1.dashCd<=0 && p1.dashT<=0 && canAct(p1) && p1.stamina>=STAMINA_DASH) {
+    p1.stamina-=STAMINA_DASH; p1.dashT=DASH_FRAMES; p1.dashDir=inputState.p1.dash; p1.dashCd=DASH_CD; SFX.dash();
   }
-  if (inputState.p2.dash !== 0 && p2.dashCd<=0 && p2.dashT<=0 && canAct(p2)) {
-    p2.dashT=DASH_FRAMES; p2.dashDir=inputState.p2.dash; p2.dashCd=DASH_CD; SFX.dash();
+  if (inputState.p2.dash !== 0 && p2.dashCd<=0 && p2.dashT<=0 && canAct(p2) && p2.stamina>=STAMINA_DASH) {
+    p2.stamina-=STAMINA_DASH; p2.dashT=DASH_FRAMES; p2.dashDir=inputState.p2.dash; p2.dashCd=DASH_CD; SFX.dash();
   }
   inputState.p1.dash = 0;
   inputState.p2.dash = 0;
@@ -832,13 +915,46 @@ function update() {
   p2.ducking = inputState.p2.duck ? canDuck(p2) : false;
 
   // attacks
-  const noAction = p => !p.punching && !p.kicking && !p.supering && p.punchCd<=0 && p.dashT<=0;
-  if (inputState.p1.punch && noAction(p1))                          { p1.punching=true; p1.punchT=0; }
-  if (inputState.p2.punch && noAction(p2))                          { p2.punching=true; p2.punchT=0; }
-  if (inputState.p1.kick  && noAction(p1) && p1.kickCd<=0)         { p1.kicking=true;  p1.kickT=0;  p1.kickCd=KICK_CD; }
-  if (inputState.p2.kick  && noAction(p2) && p2.kickCd<=0)         { p2.kicking=true;  p2.kickT=0;  p2.kickCd=KICK_CD; }
-  if (inputState.p1.super && noAction(p1) && p1.superCd<=0)        { p1.supering=true; p1.superT=0; p1.superCd=SUPER_CD; p1.superFlash=30; p1.superHit=false; SFX.superCharge(); setTimeout(()=>{ if(p1.supering) SFX.superStretch(); }, 60); }
-  if (inputState.p2.super && noAction(p2) && p2.superCd<=0)        { p2.supering=true; p2.superT=0; p2.superCd=SUPER_CD; p2.superFlash=30; p2.superHit=false; SFX.superCharge(); setTimeout(()=>{ if(p2.supering) SFX.superStretch(); }, 60); }
+  const noAction = p => !p.punching && !p.kicking && !p.supering && !p.uppercutting && !p.sweeping && !p.grabbing && p.punchCd<=0 && p.dashT<=0;
+
+  // ── Grab hold-time tracking (only when idle) ──────────────────────────────
+  for (const [p, is] of [[p1, inputState.p1], [p2, inputState.p2]]) {
+    const opp = p === p1 ? p2 : p1;
+    if (is.punch && !p.knockdown && noAction(p)) {
+      p.grabHoldT = Math.min(p.grabHoldT + 1, GRAB_HOLD_FRAMES + 5);
+    } else if (!is.punch) {
+      p.grabHoldT = 0;
+    }
+    // Trigger grab when held long enough in close range
+    if (p.grabHoldT >= GRAB_HOLD_FRAMES && p.grabCd <= 0 && p.stamina >= STAMINA_GRAB && Math.abs(opp.x - p.x) < GRAB_RANGE) {
+      p.stamina -= STAMINA_GRAB; p.grabbing = true; p.grabT = 0; p.grabCd = GRAB_CD; p.grabHoldT = 0;
+    }
+  }
+
+  // ── Attack triggers (with stamina gating) ────────────────────────────────
+  for (const [p, is] of [[p1, inputState.p1], [p2, inputState.p2]]) {
+    // Uppercut: up + punch (takes priority over normal punch)
+    if (is.punch && is.up && noAction(p) && p.uppercutCd <= 0 && p.stamina >= STAMINA_UPPERCUT && !p.grabbing) {
+      p.stamina -= STAMINA_UPPERCUT; p.uppercutting = true; p.uppercutT = 0; p.uppercutCd = UPPERCUT_CD; p.grabHoldT = 0;
+    }
+    // Normal punch (only when not doing uppercut or grab)
+    else if (is.punch && noAction(p) && p.stamina >= STAMINA_PUNCH && !p.uppercutting && !p.grabbing && p.grabHoldT <= 1) {
+      p.stamina -= STAMINA_PUNCH; p.punching = true; p.punchT = 0; p.grabHoldT = 0;
+    }
+    // Sweep kick: duck + kick
+    if (is.kick && is.duck && noAction(p) && p.sweepCd <= 0 && p.stamina >= STAMINA_SWEEP) {
+      p.stamina -= STAMINA_SWEEP; p.sweeping = true; p.sweepT = 0; p.sweepCd = SWEEP_CD;
+    }
+    // Normal kick (only when not sweeping)
+    else if (is.kick && !is.duck && noAction(p) && p.kickCd <= 0 && p.stamina >= STAMINA_KICK && !p.sweeping) {
+      p.stamina -= STAMINA_KICK; p.kicking = true; p.kickT = 0; p.kickCd = KICK_CD;
+    }
+    // Super
+    if (is.super && noAction(p) && p.superCd <= 0 && p.stamina >= STAMINA_SUPER) {
+      p.stamina -= STAMINA_SUPER; p.supering = true; p.superT = 0; p.superCd = SUPER_CD; p.superFlash = 30; p.superHit = false;
+      SFX.superCharge(); setTimeout(() => { if (p.supering) SFX.superStretch(); }, 60);
+    }
+  }
 
   // advance timers
   if (p1.punching) { p1.punchT+=0.07; if (p1.punchT>=1) { p1.punching=false; p1.punchT=0; p1.punchCd=PUNCH_CD; } }
@@ -847,12 +963,26 @@ function update() {
   if (p2.kicking)  { p2.kickT+=0.055; if (p2.kickT>=1)  { p2.kicking=false;  p2.kickT=0; } }
   if (p1.supering) { p1.superT+=0.022; if (p1.superT>=1) { p1.supering=false; p1.superT=0; if(!p1.superHit){ floaties.push({x:p1.x+p1.dir*SUPER_REACH*0.55,y:fighterScreenY(p1)-55,vx:p1.dir*3,vy:-2,t:0,col:'#aaddff',size:22,txt:'WHOOSH! 💨'}); SFX.superWhiff(); } } }
   if (p2.supering) { p2.superT+=0.022; if (p2.superT>=1) { p2.supering=false; p2.superT=0; if(!p2.superHit){ floaties.push({x:p2.x+p2.dir*SUPER_REACH*0.55,y:fighterScreenY(p2)-55,vx:p2.dir*3,vy:-2,t:0,col:'#aaddff',size:22,txt:'WHOOSH! 💨'}); SFX.superWhiff(); } } }
+  if (p1.uppercutting) { p1.uppercutT+=0.08; if (p1.uppercutT>=1) { p1.uppercutting=false; p1.uppercutT=0; } }
+  if (p2.uppercutting) { p2.uppercutT+=0.08; if (p2.uppercutT>=1) { p2.uppercutting=false; p2.uppercutT=0; } }
+  if (p1.sweeping) { p1.sweepT+=0.065; if (p1.sweepT>=1) { p1.sweeping=false; p1.sweepT=0; } }
+  if (p2.sweeping) { p2.sweepT+=0.065; if (p2.sweepT>=1) { p2.sweeping=false; p2.sweepT=0; } }
+  if (p1.grabbing) { p1.grabT+=0.10; if (p1.grabT>=1) { p1.grabbing=false; p1.grabT=0; } }
+  if (p2.grabbing) { p2.grabT+=0.10; if (p2.grabT>=1) { p2.grabbing=false; p2.grabT=0; } }
   for (const p of [p1,p2]) {
-    if (p.kickCd>0)    p.kickCd--;
-    if (p.superCd>0)   p.superCd--;
-    if (p.punchCd>0)   p.punchCd--;
-    if (p.dashCd>0)    p.dashCd--;
-    if (p.superFlash>0) p.superFlash--;
+    if (p.kickCd>0)      p.kickCd--;
+    if (p.superCd>0)     p.superCd--;
+    if (p.punchCd>0)     p.punchCd--;
+    if (p.dashCd>0)      p.dashCd--;
+    if (p.uppercutCd>0)  p.uppercutCd--;
+    if (p.sweepCd>0)     p.sweepCd--;
+    if (p.grabCd>0)      p.grabCd--;
+    if (p.superFlash>0)  p.superFlash--;
+    // Stamina regen when not attacking
+    if (!p.punching && !p.kicking && !p.supering && !p.uppercutting && !p.sweeping && !p.grabbing) {
+      p.stamina = Math.min(MAX_STAMINA, p.stamina + STAMINA_REGEN);
+    }
+    if (p.staminaFlash > 0) p.staminaFlash--;
     if (p.wobble>0)    p.wobble--;
     if (p.hit>0)       p.hit--;
     if (p.hpFlash>0)   p.hpFlash--;
@@ -889,9 +1019,12 @@ function update() {
     }
   }
 
-  checkPunch(p1,p2); checkPunch(p2,p1);
-  checkKick(p1,p2);  checkKick(p2,p1);
-  checkSuper(p1,p2); checkSuper(p2,p1);
+  checkPunch(p1,p2);    checkPunch(p2,p1);
+  checkKick(p1,p2);     checkKick(p2,p1);
+  checkSuper(p1,p2);    checkSuper(p2,p1);
+  checkUppercut(p1,p2); checkUppercut(p2,p1);
+  checkSweep(p1,p2);    checkSweep(p2,p1);
+  checkGrab(p1,p2);     checkGrab(p2,p1);
 
   // Achievement real-time checks
   if (p1.hp < p1.maxHp * 0.25) _mWasLowHP = true;
@@ -1042,6 +1175,20 @@ function drawFighter(p) {
     ctx.beginPath(); ctx.ellipse(lx,ly,14,9,p.dir*0.4,0,Math.PI*2);
     ctx.fillStyle='#333'; ctx.fill();
   }
+  // Sweep kick — low sweeping leg
+  if (p.sweeping) {
+    const t=Math.sin(p.sweepT*Math.PI);
+    const lx=p.dir*Math.min(20+t*(GRAB_RANGE-20),fighterGap-10), ly=36+t*8;
+    ctx.beginPath(); ctx.moveTo(p.dir*10,30); ctx.quadraticCurveTo(p.dir*35,38,lx,ly);
+    ctx.strokeStyle=col; ctx.lineWidth=14; ctx.lineCap='round'; ctx.stroke();
+    if (t>0.4) {
+      ctx.save(); ctx.globalAlpha=0.55+Math.sin(Date.now()/35)*0.3;
+      ctx.beginPath(); ctx.ellipse(lx,ly,18,12,0,0,Math.PI*2);
+      ctx.fillStyle='#ff4400'; ctx.fill(); ctx.restore();
+    }
+    ctx.beginPath(); ctx.ellipse(lx,ly,12,8,0,0,Math.PI*2);
+    ctx.fillStyle='#222'; ctx.fill();
+  }
   const armY = -35;
   const nowMs = Date.now();
 
@@ -1154,6 +1301,32 @@ function drawFighter(p) {
     ctx.fillStyle = '#ffffff'; ctx.fill();
     ctx.strokeStyle = '#ffaa00'; ctx.lineWidth = 3; ctx.stroke();
     for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.moveTo(fx+p.dir*(4+i*3),armY-9); ctx.lineTo(fx+p.dir*(4+i*3),armY+9); ctx.strokeStyle='#cc8800'; ctx.lineWidth=2; ctx.stroke(); }
+  } else if (p.uppercutting) {
+    // Uppercut — arm swings upward
+    const t = Math.sin(p.uppercutT * Math.PI);
+    const ux = p.dir * (12 + t * 28), uy = armY - t * 65;
+    ctx.beginPath(); ctx.moveTo(p.dir*12, armY);
+    ctx.quadraticCurveTo(p.dir*24, armY-t*30, ux, uy);
+    ctx.strokeStyle=col; ctx.lineWidth=12; ctx.lineCap='round'; ctx.stroke();
+    ctx.strokeStyle=dark; ctx.lineWidth=2; ctx.stroke();
+    if (t > 0.5) {
+      ctx.save(); ctx.globalAlpha=0.6+Math.sin(nowMs/35)*0.3;
+      ctx.beginPath(); ctx.arc(ux,uy,20,0,Math.PI*2);
+      ctx.fillStyle='#ffffff'; ctx.fill(); ctx.restore();
+    }
+    ctx.beginPath(); ctx.arc(ux,uy,16,0,Math.PI*2);
+    ctx.fillStyle=col; ctx.fill(); ctx.strokeStyle=dark; ctx.lineWidth=2; ctx.stroke();
+  } else if (p.grabbing) {
+    // Grab arm — reaches out and claws
+    const gt = Math.sin(p.grabT * Math.PI * 0.85);
+    const gx = p.dir * Math.min(12 + gt * 65, fighterGap - 10), gy = armY + 8;
+    ctx.beginPath(); ctx.moveTo(p.dir*12, armY+8); ctx.lineTo(gx, gy);
+    ctx.strokeStyle=col; ctx.lineWidth=16; ctx.lineCap='round'; ctx.stroke();
+    ctx.strokeStyle='#ffaa00'; ctx.lineWidth=3; ctx.stroke();
+    ctx.beginPath(); ctx.arc(gx,gy,18,0,Math.PI*2);
+    ctx.fillStyle='#ffcc44'; ctx.fill();
+    ctx.strokeStyle='#ff6600'; ctx.lineWidth=2; ctx.stroke();
+    for(let i=-1;i<=1;i++){ctx.beginPath();ctx.moveTo(gx,gy);ctx.lineTo(gx+p.dir*12,gy+i*11);ctx.strokeStyle='#ff6600';ctx.lineWidth=2.5;ctx.lineCap='round';ctx.stroke();}
   } else {
     // Normal punch arm
     let armLen = 22;
@@ -1307,10 +1480,20 @@ function drawHUD() {
     ctx.save();ctx.globalAlpha=a;ctx.fillStyle='#ff2200';
     ctx.beginPath();ctx.roundRect(18,37,bw,9,3);ctx.fill();ctx.restore();
   }
+  // P1 stamina bar
+  { const stPct=p1.stamina/MAX_STAMINA;
+    const stEmpty=p1.stamina<15;
+    const stCol1=stEmpty?'#cc2200':'#cc7700', stCol2=stEmpty?'#ff4400':'#ffcc00';
+    if (stEmpty && p1.staminaFlash<=0) p1.staminaFlash=8;
+    const stA=stEmpty&&Math.floor(_hudPulse/4)%2===0?0.45:1;
+    ctx.save(); ctx.globalAlpha=stA;
+    drawBar(18,49,bw,6,p1.stamina,MAX_STAMINA,stCol1,stCol2,0,0);
+    ctx.restore();
+  }
   // P1 CD buttons
-  drawCdBtn(18,49,'KICK',p1.kickCd,KICK_CD,'#ffaa00');
-  drawCdBtn(65,49,'SUPER',p1.superCd,SUPER_CD,'#ff44ff');
-  drawCdBtn(112,49,'DASH',p1.dashCd,DASH_CD,'#00ddff');
+  drawCdBtn(18,58,'KICK',p1.kickCd,KICK_CD,'#ffaa00');
+  drawCdBtn(65,58,'SUPER',p1.superCd,SUPER_CD,'#ff44ff');
+  drawCdBtn(112,58,'DASH',p1.dashCd,DASH_CD,'#00ddff');
 
   // P2 name + HP above bar
   ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'right';
@@ -1333,10 +1516,19 @@ function drawHUD() {
     ctx.save();ctx.globalAlpha=a;ctx.fillStyle='#ff2200';
     ctx.beginPath();ctx.roundRect(W-18-bw,37,bw,9,3);ctx.fill();ctx.restore();
   }
+  // P2 stamina bar (reversed for P2 side)
+  { const stPct=p2.stamina/MAX_STAMINA;
+    const stEmpty=p2.stamina<15;
+    const stCol1=stEmpty?'#ff4400':'#ffcc00', stCol2=stEmpty?'#cc2200':'#cc7700';
+    const stA=stEmpty&&Math.floor(_hudPulse/4)%2===0?0.45:1;
+    ctx.save(); ctx.globalAlpha=stA;
+    drawBar(W-18-bw,49,bw,6,p2.stamina,MAX_STAMINA,stCol1,stCol2,0,0);
+    ctx.restore();
+  }
   // P2 CD buttons
-  drawCdBtn(W-18-bw,49,'KICK',p2.kickCd,KICK_CD,'#ffaa00');
-  drawCdBtn(W-18-bw+48,49,'SUPER',p2.superCd,SUPER_CD,'#ff44ff');
-  drawCdBtn(W-18-bw+96,49,'DASH',p2.dashCd,DASH_CD,'#00ddff');
+  drawCdBtn(W-18-bw,58,'KICK',p2.kickCd,KICK_CD,'#ffaa00');
+  drawCdBtn(W-18-bw+48,58,'SUPER',p2.superCd,SUPER_CD,'#ff44ff');
+  drawCdBtn(W-18-bw+96,58,'DASH',p2.dashCd,DASH_CD,'#00ddff');
 
   // Center HUD: round label + timer
   ctx.fillStyle='#fff'; ctx.font='bold 15px sans-serif'; ctx.textAlign='center';
