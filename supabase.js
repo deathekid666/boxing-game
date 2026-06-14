@@ -6,14 +6,75 @@
 
   const BASE_HEADERS = {
     'apikey': SB_KEY,
-    'Authorization': 'Bearer ' + SB_KEY,
     'Content-Type': 'application/json',
   };
 
-  async function sbPost(path, body, extraHeaders) {
+  // ── Auth state ───────────────────────────────────────────────────────────────
+  let _uid = null;
+  let _accessToken = null;
+  let _authReady = false;
+  const _authCallbacks = [];
+
+  function _authHeaders() {
+    return { ...BASE_HEADERS, 'Authorization': 'Bearer ' + (_accessToken || SB_KEY) };
+  }
+
+  function _storeSession(uid, access, refresh, expiresIn) {
+    _uid = uid;
+    _accessToken = access;
+    localStorage.setItem('sb_uid',     uid);
+    localStorage.setItem('sb_access',  access);
+    localStorage.setItem('sb_refresh', refresh);
+    localStorage.setItem('sb_expires', String(Math.floor(Date.now() / 1000) + expiresIn));
+  }
+
+  async function _initAuth() {
+    const storedUid     = localStorage.getItem('sb_uid');
+    const storedAccess  = localStorage.getItem('sb_access');
+    const storedRefresh = localStorage.getItem('sb_refresh');
+    const storedExpires = parseInt(localStorage.getItem('sb_expires') || '0', 10);
+
+    if (storedUid && storedRefresh) {
+      // Token still valid with 60s buffer
+      if (storedAccess && (Date.now() / 1000) < storedExpires - 60) {
+        _uid = storedUid;
+        _accessToken = storedAccess;
+        return;
+      }
+      // Try refresh
+      try {
+        const r = await fetch(SB_URL + '/auth/v1/token?grant_type=refresh_token', {
+          method: 'POST',
+          headers: BASE_HEADERS,
+          body: JSON.stringify({ refresh_token: storedRefresh }),
+        });
+        if (r.ok) {
+          const d = await r.json();
+          _storeSession(d.user.id, d.access_token, d.refresh_token, d.expires_in);
+          return;
+        }
+      } catch (_) {}
+    }
+
+    // Sign in anonymously
+    try {
+      const r = await fetch(SB_URL + '/auth/v1/signup', {
+        method: 'POST',
+        headers: BASE_HEADERS,
+        body: JSON.stringify({ data: {} }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const d = await r.json();
+      _storeSession(d.user.id, d.access_token, d.refresh_token, d.expires_in);
+    } catch (e) {
+      console.warn('[Auth] anonymous sign-in failed:', e.message);
+    }
+  }
+
+  async function _post(path, body, extra) {
     const r = await fetch(SB_URL + path, {
       method: 'POST',
-      headers: { ...BASE_HEADERS, ...extraHeaders },
+      headers: { ..._authHeaders(), ...extra },
       body: JSON.stringify(body),
     });
     if (!r.ok) throw new Error(await r.text());
@@ -21,31 +82,75 @@
     return ct.includes('json') ? r.json() : null;
   }
 
+  // ── Public API ───────────────────────────────────────────────────────────────
   window.Leaderboard = {
-    async submit({ playerName, won, kos, bestCombo, damage, opponent }) {
-      const name = (playerName || '').trim().slice(0, 32);
+    get uid() { return _uid; },
+    get ready() { return _authReady; },
+
+    async initPlayer(displayName) {
+      if (!_uid) return;
+      const name = (displayName || '').trim().slice(0, 32);
       if (!name) return;
       try {
-        await sbPost('/rest/v1/leaderboard', {
-          player_name:  name,
-          won:          !!won,
-          kos:          kos      || 0,
-          best_combo:   bestCombo || 0,
-          damage_dealt: damage    || 0,
-          opponent:     opponent  || null,
-        }, { 'Prefer': 'return=minimal' });
+        await _post('/rest/v1/players',
+          { uid: _uid, display_name: name, updated_at: new Date().toISOString() },
+          { 'Prefer': 'resolution=merge-duplicates,return=minimal' }
+        );
       } catch (e) {
-        console.warn('[Leaderboard] submit failed:', e.message);
+        console.warn('[Leaderboard] initPlayer failed:', e.message);
       }
     },
 
-    async fetchTop(limit) {
+    async recordMatchResult({ playerName, won, kos, bestCombo, damage, opponent }) {
+      if (!_uid) return;
+      const name = (playerName || '').trim().slice(0, 32);
+      if (!name) return;
       try {
-        return await sbPost('/rest/v1/rpc/get_leaderboard', { lim: limit || 20 });
+        await _post('/rest/v1/matches',
+          {
+            player_uid:   _uid,
+            player_name:  name,
+            opponent_name: opponent || null,
+            won:          !!won,
+            kos:          kos       || 0,
+            best_combo:   bestCombo || 0,
+            damage_dealt: damage    || 0,
+          },
+          { 'Prefer': 'return=minimal' }
+        );
       } catch (e) {
-        console.warn('[Leaderboard] fetch failed:', e.message);
+        console.warn('[Leaderboard] recordMatchResult failed:', e.message);
+      }
+    },
+
+    async getLeaderboard(limit) {
+      try {
+        return await _post('/rest/v1/rpc/get_leaderboard_v2', { lim: limit || 20 });
+      } catch (e) {
+        console.warn('[Leaderboard] getLeaderboard failed:', e.message);
         return null;
       }
     },
+
+    async getPlayerStats() {
+      if (!_uid) return null;
+      try {
+        const rows = await _post('/rest/v1/rpc/get_player_stats', { p_uid: _uid });
+        return Array.isArray(rows) ? rows[0] || null : rows;
+      } catch (e) {
+        console.warn('[Leaderboard] getPlayerStats failed:', e.message);
+        return null;
+      }
+    },
+
+    // Legacy aliases kept for any existing callers
+    async submit(args)     { return this.recordMatchResult(args); },
+    async fetchTop(limit)  { return this.getLeaderboard(limit); },
   };
+
+  // Auto-init on load; fire callbacks when done
+  _initAuth().finally(() => {
+    _authReady = true;
+    _authCallbacks.forEach(fn => fn());
+  });
 })();

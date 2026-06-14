@@ -158,6 +158,7 @@ let _mKOs = 0, _mDmg = 0, _mCombo = 0;
 
 // Leaderboard cache
 let _lbData = null, _lbLoading = false;
+let _myStats = null, _myStatsLoading = false;
 
 function _saveStats() {
   localStorage.setItem('fbg_streak', winStreak);
@@ -212,7 +213,7 @@ function _updateMatchStats(p1Won, isDraw) {
   if (!window.netIsOnline?.()) {
     const p1Name = (window.playerNames?.p1 || '').trim();
     if (p1Name && p1Name !== 'P1') {
-      window.Leaderboard?.submit({
+      window.Leaderboard?.recordMatchResult({
         playerName: p1Name,
         won: p1Won && !isDraw,
         kos: _mKOs,
@@ -220,7 +221,8 @@ function _updateMatchStats(p1Won, isDraw) {
         damage: _mDmg,
         opponent: (window.playerNames?.p2 || '').trim() || null,
       });
-      _lbData = null; // invalidate cache so next open fetches fresh
+      _lbData = null;   // invalidate cache so next open fetches fresh
+      _myStats = null;  // invalidate personal stats cache
     }
   }
 }
@@ -1837,12 +1839,20 @@ function drawMenu() {
 }
 
 function drawLeaderboard() {
-  // Trigger fetch on first open (or after cache invalidation)
+  // Trigger leaderboard fetch on first open (or after invalidation)
   if (!_lbData && !_lbLoading) {
     _lbLoading = true;
-    window.Leaderboard?.fetchTop(20).then(rows => {
+    window.Leaderboard?.getLeaderboard(20).then(rows => {
       _lbData = rows || [];
       _lbLoading = false;
+    });
+  }
+  // Trigger personal stats fetch
+  if (!_myStats && !_myStatsLoading && window.Leaderboard?.uid) {
+    _myStatsLoading = true;
+    window.Leaderboard.getPlayerStats().then(s => {
+      _myStats = s || null;
+      _myStatsLoading = false;
     });
   }
 
@@ -1850,7 +1860,7 @@ function drawLeaderboard() {
   ctx.save();
   ctx.textAlign = 'center';
 
-  const CX = W/2, CW = 680, CH = 400, top = H/2 - CH/2 - 5;
+  const CX = W/2, CW = 680, CH = 420, top = H/2 - CH/2 - 5;
   ctx.fillStyle = 'rgba(12,14,22,0.97)';
   ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.roundRect(CX-CW/2, top, CW, CH, 14); ctx.fill(); ctx.stroke();
@@ -1863,54 +1873,43 @@ function drawLeaderboard() {
 
   if (_lbLoading || !_lbData) {
     ctx.font = '14px sans-serif'; ctx.fillStyle = '#555';
-    ctx.fillText('Loading…', CX, top + CH/2);
+    ctx.fillText('Loading…', CX, top + 180);
   } else if (_lbData.length === 0) {
     ctx.font = '14px sans-serif'; ctx.fillStyle = '#555';
-    ctx.fillText('No scores yet — play a match to get on the board!', CX, top + CH/2);
+    ctx.fillText('No scores yet — play a match to get on the board!', CX, top + 180);
   } else {
     // Column layout
     const L = CX - CW/2 + 24;
     const cols = [
-      { label: '#',          x: L + 16,  align: 'center' },
-      { label: 'PLAYER',     x: L + 46,  align: 'left'   },
-      { label: 'W',          x: CX + 90, align: 'center' },
-      { label: 'L',          x: CX + 150,align: 'center' },
-      { label: 'KOs',        x: CX + 210,align: 'center' },
-      { label: 'COMBO',      x: CX + 280,align: 'center' },
+      { label: '#',     x: L + 16,   align: 'center' },
+      { label: 'PLAYER',x: L + 46,   align: 'left'   },
+      { label: 'W',     x: CX + 90,  align: 'center' },
+      { label: 'L',     x: CX + 150, align: 'center' },
+      { label: 'KOs',   x: CX + 210, align: 'center' },
+      { label: 'COMBO', x: CX + 280, align: 'center' },
     ];
     const headerY = top + 58;
 
-    // Headers
     ctx.font = 'bold 10px sans-serif'; ctx.fillStyle = '#555';
-    for (const c of cols) {
-      ctx.textAlign = c.align;
-      ctx.fillText(c.label, c.x, headerY);
-    }
+    for (const c of cols) { ctx.textAlign = c.align; ctx.fillText(c.label, c.x, headerY); }
 
-    // Rows
-    const rowH = 26, startY = headerY + 14;
+    const rowH = 24, startY = headerY + 14;
     const rankColors = ['#ffd700','#c0c0c0','#cd7f32'];
-    const maxRows = Math.min(_lbData.length, 12);
+    const maxRows = Math.min(_lbData.length, 10);
     for (let i = 0; i < maxRows; i++) {
       const row = _lbData[i];
       const ry = startY + i * rowH;
-      // Zebra stripe
       if (i % 2 === 0) {
         ctx.fillStyle = 'rgba(255,255,255,0.03)';
         ctx.fillRect(CX - CW/2 + 12, ry - 14, CW - 24, rowH - 2);
       }
       const nameCol = i < 3 ? rankColors[i] : '#ccc';
       ctx.font = i < 3 ? 'bold 13px sans-serif' : '13px sans-serif';
-
       ctx.textAlign = 'center'; ctx.fillStyle = i < 3 ? rankColors[i] : '#555';
       ctx.fillText(i + 1, cols[0].x, ry);
-
       ctx.textAlign = 'left'; ctx.fillStyle = nameCol;
-      const displayName = String(row.player_name).slice(0, 18);
-      ctx.fillText(displayName, cols[1].x, ry);
-
-      ctx.font = '13px sans-serif';
-      ctx.textAlign = 'center';
+      ctx.fillText(String(row.player_name).slice(0, 18), cols[1].x, ry);
+      ctx.font = '13px sans-serif'; ctx.textAlign = 'center';
       ctx.fillStyle = '#4488ff'; ctx.fillText(row.wins,       cols[2].x, ry);
       ctx.fillStyle = '#ff4444'; ctx.fillText(row.losses,     cols[3].x, ry);
       ctx.fillStyle = '#ff8800'; ctx.fillText(row.kos,        cols[4].x, ry);
@@ -1918,8 +1917,43 @@ function drawLeaderboard() {
     }
   }
 
+  // ── Your Stats strip ────────────────────────────────────────────────────────
+  const stripY = top + CH - 100;
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(CX-CW/2+24, stripY); ctx.lineTo(CX+CW/2-24, stripY); ctx.stroke();
+
+  ctx.font = 'bold 10px sans-serif'; ctx.fillStyle = '#444'; ctx.textAlign = 'center';
+  ctx.fillText('YOUR STATS (THIS DEVICE)', CX, stripY + 14);
+
+  if (_myStats) {
+    const sx = CX - 220;
+    const stats = [
+      { label: 'W',     val: _myStats.wins,         color: '#4488ff' },
+      { label: 'L',     val: _myStats.losses,        color: '#ff4444' },
+      { label: 'KOs',   val: _myStats.kos,           color: '#ff8800' },
+      { label: 'COMBO', val: _myStats.best_combo,    color: '#ffe44d' },
+      { label: 'DMG',   val: _myStats.total_damage,  color: '#aaa'    },
+    ];
+    stats.forEach((s, i) => {
+      const x = sx + i * 110;
+      ctx.font = 'bold 18px sans-serif'; ctx.fillStyle = s.color; ctx.textAlign = 'center';
+      ctx.fillText(s.val ?? 0, x, stripY + 40);
+      ctx.font = '10px sans-serif'; ctx.fillStyle = '#555';
+      ctx.fillText(s.label, x, stripY + 54);
+    });
+  } else if (_myStatsLoading) {
+    ctx.font = '12px sans-serif'; ctx.fillStyle = '#444'; ctx.textAlign = 'center';
+    ctx.fillText('Loading…', CX, stripY + 40);
+  } else if (!window.Leaderboard?.uid) {
+    ctx.font = '12px sans-serif'; ctx.fillStyle = '#444'; ctx.textAlign = 'center';
+    ctx.fillText('Sign in via Online Play to track your stats', CX, stripY + 40);
+  } else {
+    ctx.font = '12px sans-serif'; ctx.fillStyle = '#444'; ctx.textAlign = 'center';
+    ctx.fillText('No matches recorded yet', CX, stripY + 40);
+  }
+
   // BACK button
-  const bkW = 140, bkH = 34, bkX = CX - bkW/2, bkY = top + CH - 50;
+  const bkW = 140, bkH = 30, bkX = CX - bkW/2, bkY = top + CH - 38;
   ctx.fillStyle = 'rgba(40,40,55,0.9)';
   ctx.beginPath(); ctx.roundRect(bkX, bkY, bkW, bkH, 8); ctx.fill();
   ctx.strokeStyle = '#555'; ctx.lineWidth = 1.5;
@@ -2618,8 +2652,8 @@ canvas.addEventListener('click', e => {
   if(phase==='stats'){ phase='menu'; return; }
   if(phase==='achievements'){ phase='menu'; return; }
   if(phase==='leaderboard'){
-    const CX=W/2, CW=680, CH=400, top=H/2-CH/2-5;
-    const bkW=140, bkH=34, bkX=CX-bkW/2, bkY=top+CH-50;
+    const CX=W/2, CW=680, CH=420, top=H/2-CH/2-5;
+    const bkW=140, bkH=30, bkX=CX-bkW/2, bkY=top+CH-38;
     if(sx>=bkX&&sx<=bkX+bkW&&sy>=bkY&&sy<=bkY+bkH){ SFX.click(); phase='menu'; return; }
     return;
   }

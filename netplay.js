@@ -437,6 +437,7 @@
       nameInput.style.outline = '';
       myName = n;
       panel.querySelector('#np-player-tag').textContent = 'Playing as: ' + n;
+      window.Leaderboard?.initPlayer(n);
       showScreen('mode');
     });
     nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') panel.querySelector('#np-name-ok').click(); });
