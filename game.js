@@ -114,9 +114,9 @@ const RING_BACK_S    = 0.82;  // render scale at back (10-18% range — subtle 2
 const RING_FRONT_S   = 1.0;
 const DEPTH_SPEED    = 0.012; // depth axis movement per frame
 const DEPTH_WORLD_SCALE = 60; // depth units → world-px (unified with X for hit detection)
-const PUNCH_HIT_R  = 38;      // world-px hit radius for punch
-const KICK_HIT_R   = 46;      // world-px hit radius for kick
-const SUPER_HIT_R  = 70;      // world-px hit radius for super
+const PUNCH_HIT_R  = 80;      // world-px hit radius for punch
+const KICK_HIT_R   = 90;      // world-px hit radius for kick
+const SUPER_HIT_R  = 120;     // world-px hit radius for super
 const JUMP_VZ      = -12;
 const GRAVITY      = 0.7;
 const JUMP_CD      = 30;
@@ -155,6 +155,9 @@ let _streakNewBest = false;
 
 // Per-match accumulators (reset at startFight, accumulated each round)
 let _mKOs = 0, _mDmg = 0, _mCombo = 0;
+
+// Leaderboard cache
+let _lbData = null, _lbLoading = false;
 
 function _saveStats() {
   localStorage.setItem('fbg_streak', winStreak);
@@ -204,6 +207,22 @@ function _updateMatchStats(p1Won, isDraw) {
   }
   if (statDmg >= 5000)  _unlockAch('iron_fist');
   if (played >= 20)     _unlockAch('veteran');
+
+  // Submit to global leaderboard (local/CPU matches only, not online)
+  if (!window.netIsOnline?.()) {
+    const p1Name = (window.playerNames?.p1 || '').trim();
+    if (p1Name && p1Name !== 'P1') {
+      window.Leaderboard?.submit({
+        playerName: p1Name,
+        won: p1Won && !isDraw,
+        kos: _mKOs,
+        bestCombo: _mCombo,
+        damage: _mDmg,
+        opponent: (window.playerNames?.p2 || '').trim() || null,
+      });
+      _lbData = null; // invalidate cache so next open fetches fresh
+    }
+  }
 }
 
 // ── Achievements ─────────────────────────────────────────────────────────────
@@ -702,7 +721,7 @@ function updateCPU() {
 
 // ── Update ────────────────────────────────────────────────────────────────────
 function update() {
-  if (phase==='menu' || phase==='charSelect' || phase==='stats' || phase==='achievements' || phase==='settings') return;
+  if (phase==='menu' || phase==='charSelect' || phase==='stats' || phase==='achievements' || phase==='settings' || phase==='leaderboard') return;
 
   if (phase === 'arcadeVS') {
     arcadeVSTimer--;
@@ -1385,17 +1404,41 @@ function drawKnockdownCount() {
     const t = p.knockdownT;
     if (t < KD_FALL || t >= KD_FALL + KD_DOWN) continue;
     const countFrame = t - KD_FALL;
+    const s = depthToScale(p.depth);
+    const baseX = p.x;
+    const baseY = fighterScreenY(p);
+
+    // When lying down, head has rotated 90° — orbit stars around the actual head
+    const headX = baseX - p.dir * 52 * s;
+    const headY = baseY - 8 * s;
+
+    // Spinning stars around the fallen fighter's head
+    ctx.save();
+    const starCount = 5;
+    const starR = 34 * s;
+    for (let i = 0; i < starCount; i++) {
+      const angle = (countFrame * 0.13) + (i / starCount) * Math.PI * 2;
+      const stx = headX + Math.cos(angle) * starR;
+      const sty = headY + Math.sin(angle) * starR * 0.5;
+      ctx.font = `${Math.round(16 * s)}px sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.globalAlpha = 0.9;
+      ctx.fillText('⭐', stx, sty);
+    }
+    ctx.restore();
+
+    // Boxing count — shown above the lying body
     const count = Math.min(8, Math.floor(countFrame / 15) + 1);
-    const sx = p.x;
-    const sy = fighterScreenY(p) - 96 * depthToScale(p.depth);
+    const countX = baseX;
+    const countY = baseY - 96 * s;
     const pulse = 1 + Math.sin(countFrame * 0.35) * 0.08;
     ctx.save();
-    ctx.textAlign = 'center';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
     ctx.font = `bold ${Math.round(52 * pulse)}px sans-serif`;
     ctx.strokeStyle = '#000'; ctx.lineWidth = 7;
-    ctx.strokeText(String(count), sx, sy);
+    ctx.strokeText(String(count), countX, countY);
     ctx.fillStyle = '#ffe44d';
-    ctx.fillText(String(count), sx, sy);
+    ctx.fillText(String(count), countX, countY);
     ctx.restore();
   }
 }
@@ -1772,24 +1815,117 @@ function drawMenu() {
     ctx.fillText(`🏆 Best: ${bestStreak}`, W/2 + 70, streakY);
   }
 
-  // STATS + SETTINGS buttons side by side
-  const sbx = W/2 - 108, sby = 434, sbw = 104, sbh = 24;
-  const played = statWins + statLosses + statDraws;
-  ctx.fillStyle = 'rgba(40,40,50,0.85)';
-  ctx.beginPath(); ctx.roundRect(sbx, sby, sbw, sbh, 7); ctx.fill();
-  ctx.strokeStyle = '#444'; ctx.lineWidth = 1.2;
-  ctx.beginPath(); ctx.roundRect(sbx, sby, sbw, sbh, 7); ctx.stroke();
-  ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
-  ctx.fillStyle = '#888';
-  ctx.fillText(played > 0 ? `📊 STATS  (${played} played)` : '📊 STATS', sbx + sbw/2, sby + 17);
-  // Settings button
-  const stgx = W/2 + 4, stgy = sby, stgw = sbw, stgh = sbh;
-  ctx.fillStyle = 'rgba(40,40,50,0.85)';
-  ctx.beginPath(); ctx.roundRect(stgx, stgy, stgw, stgh, 7); ctx.fill();
-  ctx.strokeStyle = '#444'; ctx.lineWidth = 1.2;
-  ctx.beginPath(); ctx.roundRect(stgx, stgy, stgw, stgh, 7); ctx.stroke();
-  ctx.fillStyle = '#888'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText('⚙️ SETTINGS', stgx + stgw/2, stgy + 17);
+  // STATS | LEADERBOARD | SETTINGS buttons
+  const _btnY = 434, _btnH = 24, _btnW = 96, _btnGap = 8;
+  const _btnStart = W/2 - (_btnW*3 + _btnGap*2)/2;
+  const _btns = [
+    { label: statWins+statLosses+statDraws > 0 ? `📊 STATS (${statWins+statLosses+statDraws})` : '📊 STATS', phase: 'stats' },
+    { label: '🏆 LEADERBOARD', phase: 'leaderboard' },
+    { label: '⚙️ SETTINGS',   phase: 'settings' },
+  ];
+  _btns.forEach((b, i) => {
+    const bx = _btnStart + i * (_btnW + _btnGap);
+    ctx.fillStyle = 'rgba(40,40,50,0.85)';
+    ctx.beginPath(); ctx.roundRect(bx, _btnY, _btnW, _btnH, 7); ctx.fill();
+    ctx.strokeStyle = '#444'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.roundRect(bx, _btnY, _btnW, _btnH, 7); ctx.stroke();
+    ctx.fillStyle = '#888'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(b.label, bx + _btnW/2, _btnY + 16);
+  });
+
+  ctx.restore();
+}
+
+function drawLeaderboard() {
+  // Trigger fetch on first open (or after cache invalidation)
+  if (!_lbData && !_lbLoading) {
+    _lbLoading = true;
+    window.Leaderboard?.fetchTop(20).then(rows => {
+      _lbData = rows || [];
+      _lbLoading = false;
+    });
+  }
+
+  ctx.fillStyle = 'rgba(0,0,0,0.92)'; ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.textAlign = 'center';
+
+  const CX = W/2, CW = 680, CH = 400, top = H/2 - CH/2 - 5;
+  ctx.fillStyle = 'rgba(12,14,22,0.97)';
+  ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.roundRect(CX-CW/2, top, CW, CH, 14); ctx.fill(); ctx.stroke();
+
+  // Title
+  ctx.font = 'bold 18px sans-serif'; ctx.fillStyle = '#ffe44d';
+  ctx.fillText('🏆  LEADERBOARD', CX, top + 32);
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(CX-CW/2+24, top+42); ctx.lineTo(CX+CW/2-24, top+42); ctx.stroke();
+
+  if (_lbLoading || !_lbData) {
+    ctx.font = '14px sans-serif'; ctx.fillStyle = '#555';
+    ctx.fillText('Loading…', CX, top + CH/2);
+  } else if (_lbData.length === 0) {
+    ctx.font = '14px sans-serif'; ctx.fillStyle = '#555';
+    ctx.fillText('No scores yet — play a match to get on the board!', CX, top + CH/2);
+  } else {
+    // Column layout
+    const L = CX - CW/2 + 24;
+    const cols = [
+      { label: '#',          x: L + 16,  align: 'center' },
+      { label: 'PLAYER',     x: L + 46,  align: 'left'   },
+      { label: 'W',          x: CX + 90, align: 'center' },
+      { label: 'L',          x: CX + 150,align: 'center' },
+      { label: 'KOs',        x: CX + 210,align: 'center' },
+      { label: 'COMBO',      x: CX + 280,align: 'center' },
+    ];
+    const headerY = top + 58;
+
+    // Headers
+    ctx.font = 'bold 10px sans-serif'; ctx.fillStyle = '#555';
+    for (const c of cols) {
+      ctx.textAlign = c.align;
+      ctx.fillText(c.label, c.x, headerY);
+    }
+
+    // Rows
+    const rowH = 26, startY = headerY + 14;
+    const rankColors = ['#ffd700','#c0c0c0','#cd7f32'];
+    const maxRows = Math.min(_lbData.length, 12);
+    for (let i = 0; i < maxRows; i++) {
+      const row = _lbData[i];
+      const ry = startY + i * rowH;
+      // Zebra stripe
+      if (i % 2 === 0) {
+        ctx.fillStyle = 'rgba(255,255,255,0.03)';
+        ctx.fillRect(CX - CW/2 + 12, ry - 14, CW - 24, rowH - 2);
+      }
+      const nameCol = i < 3 ? rankColors[i] : '#ccc';
+      ctx.font = i < 3 ? 'bold 13px sans-serif' : '13px sans-serif';
+
+      ctx.textAlign = 'center'; ctx.fillStyle = i < 3 ? rankColors[i] : '#555';
+      ctx.fillText(i + 1, cols[0].x, ry);
+
+      ctx.textAlign = 'left'; ctx.fillStyle = nameCol;
+      const displayName = String(row.player_name).slice(0, 18);
+      ctx.fillText(displayName, cols[1].x, ry);
+
+      ctx.font = '13px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#4488ff'; ctx.fillText(row.wins,       cols[2].x, ry);
+      ctx.fillStyle = '#ff4444'; ctx.fillText(row.losses,     cols[3].x, ry);
+      ctx.fillStyle = '#ff8800'; ctx.fillText(row.kos,        cols[4].x, ry);
+      ctx.fillStyle = '#ffe44d'; ctx.fillText(row.best_combo, cols[5].x, ry);
+    }
+  }
+
+  // BACK button
+  const bkW = 140, bkH = 34, bkX = CX - bkW/2, bkY = top + CH - 50;
+  ctx.fillStyle = 'rgba(40,40,55,0.9)';
+  ctx.beginPath(); ctx.roundRect(bkX, bkY, bkW, bkH, 8); ctx.fill();
+  ctx.strokeStyle = '#555'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.roundRect(bkX, bkY, bkW, bkH, 8); ctx.stroke();
+  ctx.fillStyle = '#aaa'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('← BACK', CX, bkY + bkH/2 + 5);
 
   ctx.restore();
 }
@@ -2384,6 +2520,7 @@ function draw() {
   if(phase==='stats'){drawStats();drawAchToast();return;}
   if(phase==='achievements'){drawAchievements();drawAchToast();return;}
   if(phase==='settings'){drawSettings();return;}
+  if(phase==='leaderboard'){drawLeaderboard();return;}
   if(phase==='charSelect'){drawCharSelect();return;}
   if(phase==='arcadeVS'){drawArcadeVS();return;}
   if(phase==='arcadeOver'){drawArcadeOver();return;}
@@ -2480,6 +2617,12 @@ canvas.addEventListener('click', e => {
   }
   if(phase==='stats'){ phase='menu'; return; }
   if(phase==='achievements'){ phase='menu'; return; }
+  if(phase==='leaderboard'){
+    const CX=W/2, CW=680, CH=400, top=H/2-CH/2-5;
+    const bkW=140, bkH=34, bkX=CX-bkW/2, bkY=top+CH-50;
+    if(sx>=bkX&&sx<=bkX+bkW&&sy>=bkY&&sy<=bkY+bkH){ SFX.click(); phase='menu'; return; }
+    return;
+  }
   if(phase==='settings'){
     const CX=W/2, CW2=480, CH2=360, top2=H/2-CH2/2;
     // Back button
@@ -2519,9 +2662,16 @@ canvas.addEventListener('click', e => {
     if(sx>=W/2-100&&sx<=W/2+100&&sy>=290&&sy<=330){ SFX.click(); totalRounds=menuSelected; startGame(); return; }
     if(sx>=W/2-100&&sx<=W/2+100&&sy>=338&&sy<=372){ SFX.click(); startArcade(); return; }
     if(sx>=W/2-100&&sx<=W/2+100&&sy>=380&&sy<=412){ SFX.click(); totalRounds=menuSelected; startVsAI('medium'); return; }
-    // STATS button
-    if(sx>=W/2-108&&sx<=W/2-4&&sy>=434&&sy<=458){ SFX.click(); phase='stats'; return; }
-    if(sx>=W/2+4&&sx<=W/2+108&&sy>=434&&sy<=458){ SFX.click(); phase='settings'; return; }
+    // STATS | LEADERBOARD | SETTINGS buttons (3×96 + 2×8 = 312px centred)
+    { const _bW=96,_bG=8,_bS=W/2-(_bW*3+_bG*2)/2,_bY=434,_bH=24;
+      if(sy>=_bY&&sy<=_bY+_bH){
+        if(sx>=_bS&&sx<=_bS+_bW){ SFX.click(); phase='stats'; return; }
+        const lbX=_bS+_bW+_bG;
+        if(sx>=lbX&&sx<=lbX+_bW){ SFX.click(); phase='leaderboard'; return; }
+        const stX=lbX+_bW+_bG;
+        if(sx>=stX&&sx<=stX+_bW){ SFX.click(); phase='settings'; return; }
+      }
+    }
     return;
   }
   if(phase==='roundEnd'||phase==='gameOver'){
@@ -2588,7 +2738,7 @@ document.addEventListener('keydown', e=>{
   if(e.key==='F11'){ e.preventDefault(); _toggleFullscreen(); return; }
   if(e.key==='r'||e.key==='R'){ if(phase==='arcadeOver'){ startArcade(); return; } }
   if(e.key==='Escape'){
-    if(phase==='stats'||phase==='achievements'||phase==='settings'){ phase='menu'; return; }
+    if(phase==='stats'||phase==='achievements'||phase==='settings'||phase==='leaderboard'){ phase='menu'; return; }
     if(phase==='arcadeOver'||phase==='arcadeComplete'){ isArcade=false; phase='menu'; window.BGM?.setPhase('menu'); return; }
   }
   if(e.key==='Tab'){
