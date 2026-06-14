@@ -702,7 +702,7 @@ function updateCPU() {
 
 // ── Update ────────────────────────────────────────────────────────────────────
 function update() {
-  if (phase==='menu' || phase==='charSelect' || phase==='stats' || phase==='achievements') return;
+  if (phase==='menu' || phase==='charSelect' || phase==='stats' || phase==='achievements' || phase==='settings') return;
 
   if (phase === 'arcadeVS') {
     arcadeVSTimer--;
