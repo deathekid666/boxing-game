@@ -1731,7 +1731,10 @@ function drawMenu() {
   ctx.fillStyle='rgba(0,0,0,0.92)';ctx.fillRect(0,0,W,H);
   ctx.save();ctx.textAlign='center';
   ctx.font='bold 52px sans-serif';ctx.fillStyle='#ffe44d';
-  ctx.fillText('🥊  LARGUMENT  🥊',W/2,120);
+  ctx.fillText('LARGUMENT',W/2,120);
+  ctx.font='84px sans-serif';
+  ctx.fillText('🥊',W/2-210,128);
+  ctx.save();ctx.scale(-1,1);ctx.fillText('🥊',-(W/2+210),128);ctx.restore();
   ctx.font='18px sans-serif';ctx.fillStyle='#aaa';
   ctx.fillText('Choose number of rounds',W/2,180);
   const opts=[1,3,5];
